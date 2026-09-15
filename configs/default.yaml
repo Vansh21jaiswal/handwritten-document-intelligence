@@ -1,20 +1,42 @@
 # Default model and pipeline configuration
+# All values are read at runtime — do not hardcode in source files.
 
 model:
-  name: "crnn"                # Placeholder — architecture TBD
-  input_height: 32            # Image height after preprocessing (px)
+  name: "crnn"
+  input_height: 128           # Image height after preprocessing (px)
   input_channels: 1           # Grayscale
 
+  # CNN feature extractor
+  cnn_channels: [32, 64, 128, 256]   # Output channels per conv block
+  cnn_kernel_size: 3                 # Kernel size for all conv layers
+  cnn_dropout: 0.1                   # Dropout after each conv block
+
+  # BiLSTM sequence model
+  rnn_hidden: 256             # Hidden units per LSTM direction
+  rnn_layers: 2               # Number of stacked BiLSTM layers
+  rnn_dropout: 0.3            # Dropout between LSTM layers (>1 layer only)
+
 preprocessing:
-  target_height: 32
-  binarize: true
-  normalize: true
+  target_height: 128          # Fixed height; width scales proportionally
+  mean: 0.5                   # Normalisation mean (grayscale single-channel)
+  std: 0.5                    # Normalisation std  (grayscale single-channel)
+
+tokenizer:
+  blank_token: "<BLANK>"      # CTC blank — always assigned index 0
+  unknown_token: "<UNK>"      # Fallback for unseen characters
 
 training:
-  batch_size: 32
-  learning_rate: 1.0e-3
+  batch_size: 8               # Small — images have variable (large) width
+  learning_rate: 5.0e-4
+  weight_decay: 1.0e-4
   max_epochs: 50
-  device: "cpu"               # Switch to "cuda" or "mps" when available
+  grad_clip: 5.0              # Max gradient L2 norm for clipping
+  device: "auto"              # "auto" = cuda > mps > cpu; or set explicitly
+
+  # Smoke-training subset (for quick pipeline verification)
+  smoke_train_samples: 200
+  smoke_val_samples: 50
+  smoke_epochs: 1
 
 evaluation:
   metrics:
@@ -23,4 +45,4 @@ evaluation:
 
 inference:
   checkpoint: null            # Path to model checkpoint (.pt)
-  device: "cpu"
+  device: "auto"
