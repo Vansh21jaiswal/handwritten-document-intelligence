@@ -1,0 +1,26 @@
+# Default model and pipeline configuration
+
+model:
+  name: "crnn"                # Placeholder — architecture TBD
+  input_height: 32            # Image height after preprocessing (px)
+  input_channels: 1           # Grayscale
+
+preprocessing:
+  target_height: 32
+  binarize: true
+  normalize: true
+
+training:
+  batch_size: 32
+  learning_rate: 1.0e-3
+  max_epochs: 50
+  device: "cpu"               # Switch to "cuda" or "mps" when available
+
+evaluation:
+  metrics:
+    - cer
+    - wer
+
+inference:
+  checkpoint: null            # Path to model checkpoint (.pt)
+  device: "cpu"

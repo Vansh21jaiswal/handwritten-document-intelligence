@@ -1,0 +1,87 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.pyo
+
+# ─── Distribution / Packaging ─────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+wheels/
+
+# ─── Virtual Environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# ─── Jupyter Notebooks ────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ─── Data & Datasets ──────────────────────────────────────────────────────────
+data/raw/
+data/processed/
+
+# ─── Model Weights & Checkpoints ──────────────────────────────────────────────
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pb
+*.onnx
+*.bin
+checkpoints/
+runs/
+outputs/
+
+# ─── Logs & Metrics ───────────────────────────────────────────────────────────
+logs/
+*.log
+wandb/
+mlruns/
+lightning_logs/
+
+# ─── Cache ────────────────────────────────────────────────────────────────────
+.cache/
+*.cache
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ─── IDE & Editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# ─── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ─── Environment Variables ────────────────────────────────────────────────────
+.env
+.env.*
+secrets.yaml
+secrets.yml
+
+# ─── Coverage ─────────────────────────────────────────────────────────────────
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
