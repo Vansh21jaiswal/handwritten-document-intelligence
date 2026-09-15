@@ -11,7 +11,7 @@ This project aims to build an end-to-end pipeline for recognizing and interpreti
 - **Evaluation** — Character Error Rate (CER) and Word Error Rate (WER) metrics
 - **Inference** — a clean pipeline for running predictions on new images
 
-> ⚠️ This project is under active development. No accuracy claims are made at this stage.
+>  This project is under active development. No accuracy claims are made at this stage.
 
 ## Project Structure
 
