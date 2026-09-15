@@ -14,6 +14,12 @@ jiwer>=3.0          # CER / WER computation
 pyyaml>=6.0
 omegaconf>=2.3
 
+# ─── Dataset / Hugging Face ───────────────────────────────────────────────────
+datasets>=2.18           # HuggingFace datasets — used to stream Teklia/IAM-line
+
+# ─── Visualization ────────────────────────────────────────────────────────────
+matplotlib>=3.8          # dataset inspection visualizations
+
 # ─── Utilities ────────────────────────────────────────────────────────────────
 tqdm>=4.66
 loguru>=0.7
