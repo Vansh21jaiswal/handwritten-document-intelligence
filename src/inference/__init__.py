@@ -1,6 +1,11 @@
 """
 Inference sub-package.
 
-End-to-end inference pipeline: load model, preprocess image,
-run prediction, decode output.
+Public API
+----------
+GreedyDecoder  — CTC greedy decoder: argmax → collapse → remove blank → text
 """
+
+from src.inference.greedy_decoder import GreedyDecoder
+
+__all__ = ["GreedyDecoder"]

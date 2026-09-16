@@ -1,104 +1,102 @@
 """
 trainer.py
 ==========
-Minimal training and validation loop for the CNN-BiLSTM-CTC HTR model.
+Training and validation loop for the CNN-BiLSTM-CTC HTR model.
+
+Data access
+-----------
+Uses load_iam_splits() from src.dataset.iam_loader, which calls
+datasets.load_dataset("Teklia/IAM-line"). On the first run this downloads
+the full dataset as Parquet files (images embedded) to the HuggingFace
+local cache (~/.cache/huggingface/datasets/ by default). All subsequent
+runs read from this local cache — no network access required.
 
 This module provides:
-  - train_one_epoch()  — one pass over the training DataLoader
-  - validate()         — one pass over the validation DataLoader
-  - run_training()     — orchestrates the full training setup
-
-The model is NOT saved to disk in this file. Checkpointing will be
-added in a later sprint.
-
-Usage
------
->>> from src.training.trainer import run_training
->>> run_training(cfg, smoke=True)  # runs a 1-epoch smoke experiment
+  - build_data_pipeline()  — tokenizer + datasets + DataLoaders
+  - train_one_epoch()      — one pass over the training DataLoader
+  - validate_epoch()       — loss + greedy-decoded CER/WER
+  - run_training()         — full orchestrator (smoke + full modes)
 """
 
 from __future__ import annotations
 
-import io
 import sys
 import time
-from typing import Dict
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-import requests
 import torch
 import torch.nn as nn
-from PIL import Image
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 
 from src.dataset.iam_dataset import IAMTorchDataset, build_collate_fn
+from src.dataset.iam_loader import load_iam_splits
 from src.dataset.tokenizer import CharTokenizer
+from src.evaluation.metrics import compute_cer, compute_wer
+from src.inference.greedy_decoder import GreedyDecoder
 from src.models.crnn import CRNN
 from src.preprocessing.image_transforms import ImagePreprocessor
+from src.training.checkpoint import save_checkpoint
 from src.training.ctc_loss import build_ctc_loss, compute_ctc_loss
 from src.training.device import get_device
-
-# ─── HF Datasets Viewer API (no full dataset download) ───────────────────────
-HF_API_BASE = "https://datasets-server.huggingface.co"
-DATASET_ID = "Teklia/IAM-line"
+from src.training.seed import set_seed
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Data fetching helpers (API-based, no disk storage)
+# Data pipeline builder
 # ────────────────────────────────────────────────────────────────────────────
 
-def _fetch_rows(split: str, n: int) -> list:
-    """Fetch rows from HF API, chunking to obey the 100-row limit per request."""
-    rows = []
-    chunk_size = 100
-    for offset in range(0, n, chunk_size):
-        length = min(chunk_size, n - offset)
-        resp = requests.get(
-            f"{HF_API_BASE}/rows",
-            params={"dataset": DATASET_ID, "config": "default",
-                    "split": split, "offset": offset, "length": length},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        rows.extend(r["row"] for r in resp.json().get("rows", []))
-    return rows
+def build_data_pipeline(
+    train_hf,
+    val_hf,
+    cfg: dict,
+    batch_size: int,
+    num_workers: int = 0,
+) -> Tuple[CharTokenizer, DataLoader, DataLoader]:
+    """Build tokenizer + DataLoaders from HuggingFace Dataset splits.
 
+    Tokenizer vocabulary is built from train_hf["text"] ONLY — no leakage.
 
-def _load_pil(src_dict: dict) -> Image.Image:
-    url = src_dict.get("src", "")
-    r = requests.get(url, timeout=15)
-    r.raise_for_status()
-    return Image.open(io.BytesIO(r.content))
+    Parameters
+    ----------
+    train_hf : datasets.Dataset
+        Training split (or subset) from load_iam_splits().
+    val_hf : datasets.Dataset
+        Validation split (or subset).
+    cfg : dict
+        Full config dict (uses cfg["tokenizer"] and cfg["preprocessing"]).
+    batch_size : int
+    num_workers : int
 
+    Returns
+    -------
+    tokenizer, train_loader, val_loader
+    """
+    # Build tokenizer from training texts only
+    tokenizer = CharTokenizer.from_config(cfg["tokenizer"])
+    tokenizer.build_vocab(train_hf["text"])   # HF column access → List[str]
+    print(f"  Tokenizer: vocab_size={tokenizer.vocab_size}  blank_idx={tokenizer.blank_index}")
 
-class _ApiFetchedSplit:
-    """Minimal HF-split-compatible wrapper around rows fetched from the API."""
+    preprocessor = ImagePreprocessor.from_config(cfg["preprocessing"])
+    collate = build_collate_fn(pad_value=0.0)
 
-    def __init__(self, rows: list, verbose: bool = True) -> None:
-        self._images: list = []
-        self._texts: list = []
-        for i, row in enumerate(rows):
-            img = _load_pil(row["image"])
-            self._images.append(img)
-            self._texts.append(row["text"])
-            if verbose:
-                sys.stdout.write(f"\r  Downloaded {i+1}/{len(rows)} images")
-                sys.stdout.flush()
-        if verbose:
-            print()
+    train_ds = IAMTorchDataset(train_hf, preprocessor, tokenizer)
+    val_ds   = IAMTorchDataset(val_hf,   preprocessor, tokenizer)
 
-    def __len__(self) -> int:
-        return len(self._texts)
-
-    def __getitem__(self, idx: int) -> Dict:
-        return {"image": self._images[idx], "text": self._texts[idx]}
-
-    @property
-    def texts(self) -> list:
-        return self._texts
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True,
+        collate_fn=collate, num_workers=num_workers, pin_memory=False,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=batch_size, shuffle=False,
+        collate_fn=collate, num_workers=num_workers, pin_memory=False,
+    )
+    print(f"  train batches={len(train_loader)}  val batches={len(val_loader)}")
+    return tokenizer, train_loader, val_loader
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Training loop helpers
+# Per-epoch training / validation
 # ────────────────────────────────────────────────────────────────────────────
 
 def train_one_epoch(
@@ -109,44 +107,27 @@ def train_one_epoch(
     device: torch.device,
     grad_clip: float,
 ) -> float:
-    """Run one full pass over the training DataLoader.
-
-    Parameters
-    ----------
-    model       : CRNN model in training mode
-    loader      : DataLoader with the custom collate function
-    criterion   : nn.CTCLoss instance
-    optimizer   : torch optimizer
-    device      : target device
-    grad_clip   : max L2 norm for gradient clipping (0 = no clipping)
+    """One full pass over the training DataLoader.
 
     Returns
     -------
     float
-        Mean training loss over all batches.
+        Mean training loss.
     """
     model.train()
     total_loss = 0.0
     n_batches = 0
 
     for batch_idx, batch in enumerate(loader):
-        images = batch["images"].to(device)          # (B, 1, H, W_max)
-        targets = batch["targets"].to(device)        # (sum_T,)
-        target_lengths = batch["target_lengths"].to(device)  # (B,)
-        image_widths = batch["image_widths"].to(device)      # (B,)
+        images        = batch["images"].to(device)
+        targets       = batch["targets"].to(device)
+        target_lengths = batch["target_lengths"].to(device)
+        image_widths  = batch["image_widths"].to(device)
 
-        # Compute CTC input lengths from image widths
-        input_lengths = model.compute_input_lengths(image_widths)  # (B,)
+        input_lengths = model.compute_input_lengths(image_widths)
+        logits        = model(images)
+        loss          = compute_ctc_loss(criterion, logits, targets, input_lengths, target_lengths)
 
-        # Forward pass
-        logits = model(images)                       # (T, B, vocab_size)
-
-        # CTC loss
-        loss = compute_ctc_loss(
-            criterion, logits, targets, input_lengths, target_lengths
-        )
-
-        # Backward
         optimizer.zero_grad()
         loss.backward()
         if grad_clip > 0:
@@ -154,7 +135,7 @@ def train_one_epoch(
         optimizer.step()
 
         total_loss += loss.item()
-        n_batches += 1
+        n_batches  += 1
 
         sys.stdout.write(
             f"\r  batch {batch_idx+1}/{len(loader)}  loss={loss.item():.4f}"
@@ -166,131 +147,179 @@ def train_one_epoch(
 
 
 @torch.no_grad()
-def validate(
+def validate_epoch(
     model: nn.Module,
     loader: DataLoader,
     criterion: nn.CTCLoss,
+    decoder: GreedyDecoder,
     device: torch.device,
-) -> float:
-    """Evaluate the model on a validation DataLoader.
+) -> Tuple[float, float, float]:
+    """One full pass over the validation DataLoader.
 
     Returns
     -------
-    float
-        Mean validation loss.
+    (val_loss, val_cer, val_wer)
     """
     model.eval()
     total_loss = 0.0
-    n_batches = 0
+    n_batches  = 0
+    all_refs:  List[str] = []
+    all_hyps:  List[str] = []
 
     for batch in loader:
-        images = batch["images"].to(device)
-        targets = batch["targets"].to(device)
+        images         = batch["images"].to(device)
+        targets        = batch["targets"].to(device)
         target_lengths = batch["target_lengths"].to(device)
-        image_widths = batch["image_widths"].to(device)
+        image_widths   = batch["image_widths"].to(device)
+        texts          = batch["texts"]
 
         input_lengths = model.compute_input_lengths(image_widths)
-        logits = model(images)
-        loss = compute_ctc_loss(
-            criterion, logits, targets, input_lengths, target_lengths
-        )
+        logits        = model(images)
+
+        loss = compute_ctc_loss(criterion, logits, targets, input_lengths, target_lengths)
         total_loss += loss.item()
-        n_batches += 1
+        n_batches  += 1
 
-    return total_loss / max(n_batches, 1)
+        # Decode on CPU (safe for MPS/CUDA)
+        hyps = decoder.decode_batch(logits.cpu())
+        all_refs.extend(texts)
+        all_hyps.extend(hyps)
+
+    val_loss = total_loss / max(n_batches, 1)
+    val_cer  = compute_cer(all_refs, all_hyps)
+    val_wer  = compute_wer(all_refs, all_hyps)
+    return val_loss, val_cer, val_wer
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Top-level training orchestrator
+# Top-level orchestrator
 # ────────────────────────────────────────────────────────────────────────────
 
-def run_training(cfg: dict, smoke: bool = False) -> None:
-    """Set up and run the full training pipeline.
+def run_training(
+    cfg: dict,
+    *,
+    smoke: bool = False,
+    max_train_samples: Optional[int] = None,
+    max_val_samples: Optional[int] = None,
+    max_epochs: Optional[int] = None,
+    batch_size: Optional[int] = None,
+) -> None:
+    """Set up and run the full training pipeline using locally-cached HF data.
 
     Parameters
     ----------
     cfg : dict
-        Parsed default.yaml (full config dict).
+        Parsed default.yaml.
     smoke : bool
-        If True, uses smoke_train_samples / smoke_val_samples / smoke_epochs
-        from cfg["training"] for a quick end-to-end verification run.
+        If True, use smoke_* config values for a quick sanity check.
+    max_train_samples, max_val_samples, max_epochs, batch_size : optional
+        Command-line overrides; take priority over cfg values.
     """
     tcfg = cfg["training"]
+    dcfg = cfg.get("dataset", {})
     device = get_device(tcfg.get("device", "auto"))
 
-    n_train = tcfg["smoke_train_samples"] if smoke else None
-    n_val = tcfg["smoke_val_samples"] if smoke else None
-    n_epochs = tcfg["smoke_epochs"] if smoke else tcfg["max_epochs"]
-    batch_size = tcfg["batch_size"]
+    # ── Resolve run parameters ──────────────────────────────────────
+    if smoke:
+        n_train  = max_train_samples or tcfg["smoke_train_samples"]
+        n_val    = max_val_samples   or tcfg["smoke_val_samples"]
+        n_epochs = max_epochs        or tcfg["smoke_epochs"]
+    else:
+        n_train  = max_train_samples or tcfg.get("max_train_samples") or None
+        n_val    = max_val_samples   or tcfg.get("max_val_samples")   or None
+        n_epochs = max_epochs        or tcfg["max_epochs"]
 
-    print(f"\n{'='*60}")
+    bs          = batch_size or tcfg["batch_size"]
+    grad_clip   = tcfg.get("grad_clip", 5.0)
+    num_workers = tcfg.get("num_workers", 0)
+    seed        = tcfg.get("random_seed", 42)
+    ckpt_dir    = tcfg.get("checkpoint_dir", "checkpoints")
+    cache_dir   = dcfg.get("cache_dir", None)   # None → ~/.cache/huggingface/
+
+    set_seed(seed)
+
+    print(f"\n{'='*62}")
     mode = "SMOKE" if smoke else "FULL"
     print(f"  HTR Training — {mode} mode")
-    print(f"  train_samples={n_train}  val_samples={n_val}  epochs={n_epochs}")
-    print(f"{'='*60}\n")
+    print(f"  train≤{n_train or 'all'}  val≤{n_val or 'all'}  epochs={n_epochs}  batch={bs}")
+    print(f"{'='*62}\n")
 
-    # ── Fetch data via HF API ─────────────────────────────────────────
-    print(f"[1/5] Fetching {n_train} training rows …")
-    train_rows = _fetch_rows("train", n_train or 6482)
-    train_split = _ApiFetchedSplit(train_rows)
+    # ── Load dataset from local HF cache ─────────────────────────────
+    print("[1/5] Loading IAM-line splits from HuggingFace cache …")
+    print(f"  cache_dir = {cache_dir or '~/.cache/huggingface/datasets/'}")
+    splits = load_iam_splits(cache_dir=cache_dir)
 
-    print(f"\n[1/5] Fetching {n_val} validation rows …")
-    val_rows = _fetch_rows("validation", n_val or 976)
-    val_split = _ApiFetchedSplit(val_rows)
+    train_hf = splits["train"]
+    val_hf   = splits["validation"]
 
-    # ── Tokenizer (train texts only) ──────────────────────────────────
-    print("\n[2/5] Building tokenizer from training texts …")
-    tokenizer = CharTokenizer.from_config(cfg["tokenizer"])
-    tokenizer.build_vocab(train_split.texts)
-    print(f"  vocab_size = {tokenizer.vocab_size}")
+    # Optionally cap split sizes (smoke mode or CLI override)
+    if n_train is not None and n_train < len(train_hf):
+        train_hf = train_hf.select(range(n_train))
+    if n_val is not None and n_val < len(val_hf):
+        val_hf = val_hf.select(range(n_val))
 
-    # ── Preprocessing + Dataset + DataLoader ──────────────────────────
-    print("\n[3/5] Creating datasets and dataloaders …")
-    preprocessor = ImagePreprocessor.from_config(cfg["preprocessing"])
-    train_ds = IAMTorchDataset(train_split, preprocessor, tokenizer)
-    val_ds = IAMTorchDataset(val_split, preprocessor, tokenizer)
+    print(f"  train={len(train_hf)}  val={len(val_hf)}")
 
-    collate = build_collate_fn(pad_value=0.0)
-    train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True,
-        collate_fn=collate, num_workers=0,
+    # ── Build tokenizer + DataLoaders ─────────────────────────────────
+    print("\n[2/5] Building tokenizer and DataLoaders …")
+    tokenizer, train_loader, val_loader = build_data_pipeline(
+        train_hf, val_hf, cfg, bs, num_workers
     )
-    val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False,
-        collate_fn=collate, num_workers=0,
-    )
-    print(f"  train batches={len(train_loader)}  val batches={len(val_loader)}")
 
-    # ── Model ─────────────────────────────────────────────────────────
-    print("\n[4/5] Creating model …")
+    # ── Model ──────────────────────────────────────────────────────────
+    print("\n[3/5] Creating model …")
     model = CRNN.from_config(tokenizer.vocab_size, cfg["model"]).to(device)
     print(f"  {model}")
 
-    # ── Optimizer + Loss ──────────────────────────────────────────────
+    # ── Optimizer + Loss + Decoder ─────────────────────────────────────
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=tcfg["learning_rate"],
         weight_decay=tcfg["weight_decay"],
     )
     criterion = build_ctc_loss(blank=tokenizer.blank_index)
-    grad_clip = tcfg.get("grad_clip", 5.0)
+    decoder   = GreedyDecoder(tokenizer)
 
-    # ── Training loop ─────────────────────────────────────────────────
-    print(f"\n[5/5] Training for {n_epochs} epoch(s) …")
+    best_val_loss = float("inf")
+    t_total_start = time.time()
+
+    print(f"\n[4/5] Training for {n_epochs} epoch(s) …")
     for epoch in range(1, n_epochs + 1):
         t0 = time.time()
         print(f"\n  Epoch {epoch}/{n_epochs}")
+
         train_loss = train_one_epoch(
             model, train_loader, criterion, optimizer, device, grad_clip
         )
-        val_loss = validate(model, val_loader, criterion, device)
+        val_loss, val_cer, val_wer = validate_epoch(
+            model, val_loader, criterion, decoder, device
+        )
         elapsed = time.time() - t0
+
         print(
             f"  train_loss={train_loss:.4f}  "
             f"val_loss={val_loss:.4f}  "
+            f"val_CER={val_cer:.4f}  "
+            f"val_WER={val_wer:.4f}  "
             f"time={elapsed:.1f}s"
         )
 
-    print(f"\n{'='*60}")
-    print("  Training complete.")
-    print(f"{'='*60}\n")
+        # Checkpoint every epoch
+        save_checkpoint(
+            ckpt_dir, "latest.pt",
+            model, optimizer, epoch, val_loss, tokenizer, cfg["model"]
+        )
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            save_checkpoint(
+                ckpt_dir, "best.pt",
+                model, optimizer, epoch, val_loss, tokenizer, cfg["model"]
+            )
+            print(f"  ★ New best val_loss={val_loss:.4f} → saved best.pt")
+
+    total_time = time.time() - t_total_start
+    print(f"\n[5/5] Training complete.")
+    print(f"  Best val_loss  = {best_val_loss:.4f}")
+    print(f"  Total time     = {total_time/60:.1f} min")
+    print(f"  Checkpoints in : {Path(ckpt_dir).resolve()}")
+    print(f"\n{'='*62}\n")

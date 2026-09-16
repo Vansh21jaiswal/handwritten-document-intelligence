@@ -16,6 +16,13 @@ model:
   rnn_layers: 2               # Number of stacked BiLSTM layers
   rnn_dropout: 0.3            # Dropout between LSTM layers (>1 layer only)
 
+dataset:
+  # HuggingFace datasets local cache directory.
+  # null → uses the default: ~/.cache/huggingface/datasets/
+  # The dataset is downloaded once on first run and reused locally.
+  # Do NOT point this inside the repository directory.
+  cache_dir: null
+
 preprocessing:
   target_height: 128          # Fixed height; width scales proportionally
   mean: 0.5                   # Normalisation mean (grayscale single-channel)
@@ -26,14 +33,26 @@ tokenizer:
   unknown_token: "<UNK>"      # Fallback for unseen characters
 
 training:
-  batch_size: 8               # Small — images have variable (large) width
+  # ── Core hyperparameters ──────────────────────────────────────────
+  batch_size: 8               # Small — IAM line images are very wide
   learning_rate: 5.0e-4
   weight_decay: 1.0e-4
-  max_epochs: 50
+  max_epochs: 15              # Practical baseline on Apple Silicon
   grad_clip: 5.0              # Max gradient L2 norm for clipping
+  num_workers: 0              # 0 = main process; safe for MPS
+  random_seed: 42
+
+  # ── Device ───────────────────────────────────────────────────────
   device: "auto"              # "auto" = cuda > mps > cpu; or set explicitly
 
-  # Smoke-training subset (for quick pipeline verification)
+  # ── Dataset caps (null = use full split) ─────────────────────────
+  max_train_samples: null     # Set to integer to cap training set size
+  max_val_samples: null       # Set to integer to cap validation set size
+
+  # ── Checkpointing ─────────────────────────────────────────────────
+  checkpoint_dir: "checkpoints"   # Directory for saved checkpoints
+
+  # ── Legacy smoke-training subset (quick pipeline verification) ────
   smoke_train_samples: 200
   smoke_val_samples: 50
   smoke_epochs: 1
