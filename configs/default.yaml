@@ -27,6 +27,13 @@ preprocessing:
   target_height: 128          # Fixed height; width scales proportionally
   mean: 0.5                   # Normalisation mean (grayscale single-channel)
   std: 0.5                    # Normalisation std  (grayscale single-channel)
+  augmentation:
+    enabled: false            # Disabled, baseline performs better
+    rotation_degrees: 2       # Small rotation (-2 to 2 degrees)
+    shear_degrees: 5          # Mild shear (-5 to 5 degrees)
+    brightness_jitter: 0.2    # Mild brightness shift
+    contrast_jitter: 0.2      # Mild contrast shift
+    noise_std: 0.05           # Mild Gaussian noise standard deviation
 
 tokenizer:
   blank_token: "<BLANK>"      # CTC blank — always assigned index 0

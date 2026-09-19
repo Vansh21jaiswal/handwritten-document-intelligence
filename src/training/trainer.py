@@ -77,11 +77,13 @@ def build_data_pipeline(
     tokenizer.build_vocab(train_hf["text"])   # HF column access → List[str]
     print(f"  Tokenizer: vocab_size={tokenizer.vocab_size}  blank_idx={tokenizer.blank_index}")
 
-    preprocessor = ImagePreprocessor.from_config(cfg["preprocessing"])
+    train_preprocessor = ImagePreprocessor.from_config(cfg["preprocessing"], augment=True)
+    val_preprocessor = ImagePreprocessor.from_config(cfg["preprocessing"], augment=False)
+    
     collate = build_collate_fn(pad_value=0.0)
 
-    train_ds = IAMTorchDataset(train_hf, preprocessor, tokenizer)
-    val_ds   = IAMTorchDataset(val_hf,   preprocessor, tokenizer)
+    train_ds = IAMTorchDataset(train_hf, train_preprocessor, tokenizer)
+    val_ds   = IAMTorchDataset(val_hf,   val_preprocessor, tokenizer)
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
