@@ -1,0 +1,53 @@
+# Domain Adaptation Fine-Tuning Configuration
+
+model:
+  name: "crnn"
+  input_height: 128
+  input_channels: 1
+  cnn_channels: [32, 64, 128, 256]
+  cnn_kernel_size: 3
+  cnn_dropout: 0.1
+  rnn_hidden: 256
+  rnn_layers: 2
+  rnn_dropout: 0.3
+
+dataset:
+  cache_dir: null
+  
+preprocessing:
+  target_height: 128
+  mean: 0.5
+  std: 0.5
+  augmentation:
+    enabled: false  # Keep generic aug disabled (it hurt performance)
+    rotation_degrees: 2
+    shear_degrees: 5
+    brightness_jitter: 0.2
+    contrast_jitter: 0.2
+    noise_std: 0.05
+  domain_augmentation:
+    enabled: true
+    probability: 0.8
+    ruled_line_prob: 0.6
+    illumination_prob: 0.6
+    blur_prob: 0.4
+
+tokenizer:
+  blank_token: "<BLANK>"
+  unknown_token: "<UNK>"
+
+training:
+  batch_size: 8
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  max_epochs: 10
+  grad_clip: 5.0
+  num_workers: 0
+  random_seed: 42
+
+adaptation:
+  pretrained_checkpoint: "checkpoints/best.pt"
+  freeze_cnn: true
+  freeze_rnn: false
+  adaptation_csv: "data/adaptation/labels.csv"
+  mix_ratio: 0.5  # 50% IAM, 50% Adaptation
