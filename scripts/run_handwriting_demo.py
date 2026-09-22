@@ -369,7 +369,9 @@ def load_recogniser(device):
     from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
     model_name = "microsoft/trocr-large-handwritten"
-    processor = TrOCRProcessor.from_pretrained(model_name)
+    # Streamlit Cloud throws a generic tokenizer error when attempting to instantiate
+    # the Fast Tokenizer for RoBERTa. Forcing the slow tokenizer fixes this natively.
+    processor = TrOCRProcessor.from_pretrained(model_name, use_fast=False)
     model = VisionEncoderDecoderModel.from_pretrained(model_name)
     model.to(device)
     model.eval()
