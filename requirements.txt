@@ -6,28 +6,19 @@ opencv-python-headless>=4.8
 # ─── Deep Learning ────────────────────────────────────────────────────────────
 torch>=2.1
 torchvision>=0.16
+transformers>=4.38.0
 
-# ─── Evaluation ───────────────────────────────────────────────────────────────
-jiwer>=3.0          # CER / WER computation
+# ─── Cloud & External OCR ─────────────────────────────────────────────────────
+google-generativeai>=0.8.0
+pytesseract>=0.3.10
 
-# ─── Configuration ────────────────────────────────────────────────────────────
-pyyaml>=6.0
-omegaconf>=2.3
+# ─── Export / Document Generation ─────────────────────────────────────────────
+fpdf2>=2.7.0
+python-docx>=1.1.0
 
-# ─── Dataset / Hugging Face ───────────────────────────────────────────────────
-datasets>=2.18           # HuggingFace datasets — used to stream Teklia/IAM-line
-
-# ─── Visualization ────────────────────────────────────────────────────────────
-matplotlib>=3.8          # dataset inspection visualizations
-
-# ─── Utilities ────────────────────────────────────────────────────────────────
-tqdm>=4.66
-loguru>=0.7
-
-# ─── Testing ──────────────────────────────────────────────────────────────────
-pytest>=7.4
-pytest-cov>=4.1
-
-# ─── Web Application ────────────────────────────────────────────────────────
+# ─── Web Application ──────────────────────────────────────────────────────────
 streamlit>=1.30.0
 
+# ─── Evaluation & Utilities ───────────────────────────────────────────────────
+jiwer>=3.0
+tqdm>=4.66

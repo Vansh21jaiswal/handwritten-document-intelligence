@@ -19,7 +19,6 @@ wheels/
 venv/
 env/
 ENV/
-.env
 
 # ─── Jupyter Notebooks ────────────────────────────────────────────────────────
 .ipynb_checkpoints/
@@ -28,6 +27,8 @@ ENV/
 # ─── Data & Datasets ──────────────────────────────────────────────────────────
 data/raw/
 data/processed/
+data/adaptation/
+datasets/
 
 # ─── Model Weights & Checkpoints ──────────────────────────────────────────────
 *.pt
@@ -40,6 +41,19 @@ data/processed/
 checkpoints/
 runs/
 outputs/
+.huggingface/
+huggingface/
+
+# ─── Generated Outputs & Demos ────────────────────────────────────────────────
+outputs/
+*.jpg
+*.jpeg
+*.png
+*.pdf
+*.docx
+*.json
+*.txt
+!requirements.txt
 
 # ─── Logs & Metrics ───────────────────────────────────────────────────────────
 logs/
@@ -47,15 +61,14 @@ logs/
 wandb/
 mlruns/
 lightning_logs/
-outputs/
 
 # ─── Cache ────────────────────────────────────────────────────────────────────
 .cache/
 *.cache
-__pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+HF_CACHE/
 
 # ─── IDE & Editor ─────────────────────────────────────────────────────────────
 .vscode/
@@ -74,7 +87,7 @@ __pycache__/
 .Spotlight-V100
 .Trashes
 
-# ─── Environment Variables ────────────────────────────────────────────────────
+# ─── Environment Variables & Secrets ──────────────────────────────────────────
 .env
 .env.*
 secrets.yaml
@@ -86,3 +99,6 @@ htmlcov/
 .coverage.*
 coverage.xml
 *.cover
+
+# ─── Temporary App Scripts ────────────────────────────────────────────────────
+app/app_old.py

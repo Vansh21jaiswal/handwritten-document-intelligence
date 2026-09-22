@@ -34,7 +34,7 @@ class AdaptationDataset(Dataset):
             with open(self.csv_path, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    img_name = row.get("image", "").strip()
+                    img_name = row.get("image_path", row.get("image", "")).strip()
                     text = row.get("text", "").strip()
                     
                     if not img_name or not text:
