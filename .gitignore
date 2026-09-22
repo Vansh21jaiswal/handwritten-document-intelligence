@@ -54,6 +54,7 @@ outputs/
 *.json
 *.txt
 !requirements.txt
+!packages.txt
 
 # ─── Logs & Metrics ───────────────────────────────────────────────────────────
 logs/
