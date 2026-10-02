@@ -124,37 +124,43 @@ def _call_gemini_with_fallback(prompt: str, pil_img: Image.Image) -> str:
     
     # Cascade of models to try. If one hits a quota or 404, we try the next.
     models_to_try = [
+        "gemini-3.6-flash",         # This is the only one your key supports
         "gemini-1.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-pro",
-        "gemini-pro-vision",
-        "gemini-3.6-flash"
+        "gemini-1.5-pro"
     ]
 
+    import time
     error_log = []
+    
     for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                [prompt, pil_img],
-                generation_config=genai.types.GenerationConfig(temperature=0.0)
-            )
-            text = response.text.strip()
-            
-            # Clean up markdown blocks if present
-            if text.startswith("```"):
-                lines = text.split("\n")
-                if len(lines) > 2:
-                    text = "\n".join(lines[1:-1]).strip()
-            
-            return text
-        except Exception as e:
-            error_log.append(f"[{model_name} failed]: {str(e)}")
-            # Keep trying the next model regardless of the error
-            continue
+        retries = 2
+        for attempt in range(retries):
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(
+                    [prompt, pil_img],
+                    generation_config=genai.types.GenerationConfig(temperature=0.0)
+                )
+                text = response.text.strip()
+                
+                if text.startswith("```"):
+                    lines = text.split("\n")
+                    if len(lines) > 2:
+                        text = "\n".join(lines[1:-1]).strip()
+                
+                return text
+            except Exception as e:
+                error_str = str(e)
+                # If it's a 429 Per-Minute quota, wait and retry transparently
+                if "429" in error_str and "minute" in error_str.lower() and attempt < retries - 1:
+                    time.sleep(25)  # Wait 25 seconds for the minute quota to reset
+                    continue
+                    
+                error_log.append(f"[{model_name} attempt {attempt+1} failed]: {error_str}")
+                break # Break to next model if it's a 404 or out of retries
                 
     detailed_errors = "\n\n".join(error_log)
-    return f"Error: Exhausted all available Gemini models.\n\nDetailed Logs:\n{detailed_errors}\n\nTip: Did you reboot the app after changing the API key?"
+    return f"Error: Exhausted all available Gemini models.\n\nDetailed Logs:\n{detailed_errors}"
 
 
 def handwritten_code_ocr(image_path: str) -> str:
