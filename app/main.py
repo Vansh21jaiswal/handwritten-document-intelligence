@@ -363,8 +363,8 @@ if st.session_state.processed:
     st.success("Text extracted successfully.")
     st.markdown("---")
 
-    # ── PRINTED / CODE MODE RESULTS ───────────────────────────────────
-    if st.session_state.mode and (st.session_state.mode.startswith("🖨️") or st.session_state.mode.startswith("💻")) and st.session_state.printed_text is not None:
+    # ── TEXT RESULTS (all modes now use printed_text) ───────────────────
+    if st.session_state.printed_text is not None:
         final_text = st.session_state.printed_text
 
         res_col1, res_col2 = st.columns([1.2, 1])
