@@ -124,14 +124,14 @@ def _call_gemini_with_fallback(prompt: str, pil_img: Image.Image) -> str:
     
     # Cascade of models to try. If one hits a quota or 404, we try the next.
     models_to_try = [
-        "gemini-1.5-flash",         # Standard fast model (1500 req/day usually)
+        "gemini-1.5-flash",
         "gemini-1.5-flash-latest",
-        "gemini-1.5-pro",           # Higher accuracy, different quota pool
-        "gemini-pro-vision",        # Older stable vision model
-        "gemini-3.6-flash"          # The experimental one with the 20/day limit
+        "gemini-1.5-pro",
+        "gemini-pro-vision",
+        "gemini-3.6-flash"
     ]
 
-    last_error = None
+    error_log = []
     for model_name in models_to_try:
         try:
             model = genai.GenerativeModel(model_name)
@@ -149,15 +149,12 @@ def _call_gemini_with_fallback(prompt: str, pil_img: Image.Image) -> str:
             
             return text
         except Exception as e:
-            last_error = str(e)
-            # If it's a quota or not found error, continue to the next model
-            if "429" in last_error or "404" in last_error or "Quota" in last_error:
-                continue
-            else:
-                # If it's a different error (e.g., bad API key), stop and return
-                break
+            error_log.append(f"[{model_name} failed]: {str(e)}")
+            # Keep trying the next model regardless of the error
+            continue
                 
-    return f"Error: Exhausted all available Gemini models. Last error: {last_error}\n\nTip: You may have hit your daily API quota. Try generating a new free API key at aistudio.google.com."
+    detailed_errors = "\n\n".join(error_log)
+    return f"Error: Exhausted all available Gemini models.\n\nDetailed Logs:\n{detailed_errors}\n\nTip: Did you reboot the app after changing the API key?"
 
 
 def handwritten_code_ocr(image_path: str) -> str:
