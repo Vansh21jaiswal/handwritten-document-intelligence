@@ -114,8 +114,7 @@ def handwritten_code_ocr(image_path: str) -> str:
 
     genai.configure(api_key=api_key)
     
-    # gemini-3.6-flash is the supported version for this key
-    model = genai.GenerativeModel("gemini-3.6-flash")
+    model = genai.GenerativeModel("gemini-3.8-flash")
 
     pil_img = Image.open(image_path)
     prompt = (
@@ -154,7 +153,7 @@ def handwritten_prose_ocr(image_path: str) -> str:
         )
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-3.8-flash")
 
     pil_img = Image.open(image_path)
     prompt = (
