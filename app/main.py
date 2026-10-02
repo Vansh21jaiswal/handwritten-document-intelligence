@@ -112,10 +112,57 @@ def handwritten_code_ocr(image_path: str) -> str:
     if not api_key:
         return "Error: GEMINI_API_KEY environment variable is not set. Cloud AI is required for code recognition."
 
+def _call_gemini_with_fallback(prompt: str, pil_img: Image.Image) -> str:
+    import google.generativeai as genai
+    import os
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return "Error: GEMINI_API_KEY environment variable is not set in Streamlit Secrets."
+
     genai.configure(api_key=api_key)
     
-    model = genai.GenerativeModel("gemini-3.6-flash")
+    # Cascade of models to try. If one hits a quota or 404, we try the next.
+    models_to_try = [
+        "gemini-1.5-flash",         # Standard fast model (1500 req/day usually)
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-pro",           # Higher accuracy, different quota pool
+        "gemini-pro-vision",        # Older stable vision model
+        "gemini-3.6-flash"          # The experimental one with the 20/day limit
+    ]
 
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(
+                [prompt, pil_img],
+                generation_config=genai.types.GenerationConfig(temperature=0.0)
+            )
+            text = response.text.strip()
+            
+            # Clean up markdown blocks if present
+            if text.startswith("```"):
+                lines = text.split("\n")
+                if len(lines) > 2:
+                    text = "\n".join(lines[1:-1]).strip()
+            
+            return text
+        except Exception as e:
+            last_error = str(e)
+            # If it's a quota or not found error, continue to the next model
+            if "429" in last_error or "404" in last_error or "Quota" in last_error:
+                continue
+            else:
+                # If it's a different error (e.g., bad API key), stop and return
+                break
+                
+    return f"Error: Exhausted all available Gemini models. Last error: {last_error}\n\nTip: You may have hit your daily API quota. Try generating a new free API key at aistudio.google.com."
+
+
+def handwritten_code_ocr(image_path: str) -> str:
+    """OCR pipeline tuned for handwritten code/math on notebook/blank paper."""
+    from PIL import Image
     pil_img = Image.open(image_path)
     prompt = (
         "Extract the handwritten programming code or math from this image. "
@@ -123,42 +170,12 @@ def handwritten_code_ocr(image_path: str) -> str:
         "and symbols exactly as written. Do NOT wrap the output in markdown "
         "code blocks (like ```cpp) — just return the raw text."
     )
-
-    try:
-        response = model.generate_content(
-            [prompt, pil_img],
-            generation_config=genai.types.GenerationConfig(temperature=0.0)
-        )
-        # Clean up any accidental markdown blocks the model might still add
-        text = response.text.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if len(lines) > 2:
-                text = "\n".join(lines[1:-1])
-        return text.strip()
-    except Exception as e:
-        return f"Error connecting to Cloud AI for Code Recognition: {str(e)}"
+    return _call_gemini_with_fallback(prompt, pil_img)
 
 
 def handwritten_prose_ocr(image_path: str) -> str:
-    """OCR pipeline for handwritten prose / notebook notes using Gemini Flash.
-
-    Much faster than TrOCR-Large on Streamlit Cloud (no local model to load,
-    ~3-5 s per page via API) and handles varied handwriting styles well.
-    """
-    import google.generativeai as genai
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return (
-            "Error: GEMINI_API_KEY environment variable is not set.\n"
-            "Add it in your Streamlit Cloud app settings under Secrets."
-        )
-
-    genai.configure(api_key=api_key)
-    # Using the specific version supported by the user's environment/key
-    model = genai.GenerativeModel("gemini-3.6-flash")
-
+    """OCR pipeline for handwritten prose / notebook notes using Gemini Flash."""
+    from PIL import Image
     pil_img = Image.open(image_path)
     prompt = (
         "This is a photograph of a handwritten notebook page. "
@@ -168,17 +185,7 @@ def handwritten_prose_ocr(image_path: str) -> str:
         "Output ONLY the transcribed text, with each line of handwriting on its own line. "
         "Do NOT add any commentary, headings, or markdown formatting."
     )
-
-    try:
-        response = model.generate_content(
-            [prompt, pil_img],
-            generation_config=genai.types.GenerationConfig(temperature=0.0)
-        )
-        return response.text.strip()
-    except Exception as e:
-        # If rate limited, print available models to debug
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        return f"Error connecting to Gemini API: {str(e)}\n\nAvailable models on this key: {', '.join(available_models)}"
+    return _call_gemini_with_fallback(prompt, pil_img)
 
 
 st.set_page_config(page_title="Handwritten Notes to Text", layout="wide")
