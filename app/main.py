@@ -114,7 +114,7 @@ def handwritten_code_ocr(image_path: str) -> str:
 
     genai.configure(api_key=api_key)
     
-    model = genai.GenerativeModel("gemini-3.8-flash")
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
     pil_img = Image.open(image_path)
     prompt = (
@@ -125,7 +125,10 @@ def handwritten_code_ocr(image_path: str) -> str:
     )
 
     try:
-        response = model.generate_content([prompt, pil_img])
+        response = model.generate_content(
+            [prompt, pil_img],
+            generation_config=genai.types.GenerationConfig(temperature=0.0)
+        )
         # Clean up any accidental markdown blocks the model might still add
         text = response.text.strip()
         if text.startswith("```"):
@@ -153,7 +156,7 @@ def handwritten_prose_ocr(image_path: str) -> str:
         )
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-3.8-flash")
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
     pil_img = Image.open(image_path)
     prompt = (
@@ -166,7 +169,10 @@ def handwritten_prose_ocr(image_path: str) -> str:
     )
 
     try:
-        response = model.generate_content([prompt, pil_img])
+        response = model.generate_content(
+            [prompt, pil_img],
+            generation_config=genai.types.GenerationConfig(temperature=0.0)
+        )
         return response.text.strip()
     except Exception as e:
         return f"Error connecting to Gemini API: {str(e)}"
