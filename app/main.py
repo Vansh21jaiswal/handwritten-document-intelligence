@@ -114,7 +114,7 @@ def handwritten_code_ocr(image_path: str) -> str:
 
     genai.configure(api_key=api_key)
     
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-3.6-flash")
 
     pil_img = Image.open(image_path)
     prompt = (
@@ -156,7 +156,8 @@ def handwritten_prose_ocr(image_path: str) -> str:
         )
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    # Using the specific version supported by the user's environment/key
+    model = genai.GenerativeModel("gemini-3.6-flash")
 
     pil_img = Image.open(image_path)
     prompt = (
@@ -175,7 +176,9 @@ def handwritten_prose_ocr(image_path: str) -> str:
         )
         return response.text.strip()
     except Exception as e:
-        return f"Error connecting to Gemini API: {str(e)}"
+        # If rate limited, print available models to debug
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        return f"Error connecting to Gemini API: {str(e)}\n\nAvailable models on this key: {', '.join(available_models)}"
 
 
 st.set_page_config(page_title="Handwritten Notes to Text", layout="wide")
