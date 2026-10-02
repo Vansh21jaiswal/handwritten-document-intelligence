@@ -79,12 +79,17 @@ def _osd_rotation(pil_img) -> tuple:
 
 
 def auto_rotate_image(image_path: str) -> np.ndarray:
-    """Load image and correct its rotation using a multi-stage strategy.
+    """Load image and correct its rotation using EXIF and high-confidence OSD only.
 
     Stage 1: Apply EXIF orientation tag (phones set this without rotating pixels).
-    Stage 2: Use Tesseract OSD to detect content orientation at 0/90/180/270°.
-    Stage 3: If still landscape (w > h), pick the 90° rotation giving the most
-             horizontal HPP peaks (the better portrait orientation).
+             This is the most reliable signal — almost always correct.
+    Stage 2: Use Tesseract OSD ONLY when confidence >= 1.5 to detect 90/180/270
+             rotations. Low-confidence OSD results are ignored to avoid spurious
+             rotations of correctly-oriented landscape notebook photos.
+
+    Note: The old Stage 3 (force-rotate landscape images) has been removed.
+          Notebook photos are naturally landscape and should NOT be auto-rotated
+          to portrait just because width > height.
     """
     # Stage 1: Apply EXIF orientation
     pil_img = Image.open(image_path)
@@ -116,9 +121,12 @@ def auto_rotate_image(image_path: str) -> np.ndarray:
     # Convert to OpenCV BGR
     img = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
 
-    # Stage 2: Tesseract OSD — detect if content is rotated 90/180/270°
+    # Stage 2: Tesseract OSD — only apply when confidence is high enough.
+    # Low OSD confidence (< 1.5) means OSD could not reliably determine orientation;
+    # applying its guess in that case causes more harm than good on landscape photos.
+    OSD_MIN_CONFIDENCE = 1.5
     osd_angle, osd_conf = _osd_rotation(pil_img)
-    if osd_angle != 0:
+    if osd_angle != 0 and osd_conf >= OSD_MIN_CONFIDENCE:
         rotation_map = {
             90:  cv2.ROTATE_90_COUNTERCLOCKWISE,
             180: cv2.ROTATE_180,
@@ -127,18 +135,8 @@ def auto_rotate_image(image_path: str) -> np.ndarray:
         if osd_angle in rotation_map:
             img = cv2.rotate(img, rotation_map[osd_angle])
             print(f"OSD: rotate {osd_angle}° (confidence={osd_conf:.2f}) — corrected.")
-
-
-    # Stage 3: If still landscape after EXIF + OSD, pick best 90° rotation by HPP score
-    h, w = img.shape[:2]
-    if w > h:
-        cw  = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-        ccw = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-        score_cw  = _hpp_score(cw)
-        score_ccw = _hpp_score(ccw)
-        img = cw if score_cw >= score_ccw else ccw
-        print(f"Landscape fallback: rotated {'CW' if score_cw >= score_ccw else 'CCW'} "
-              f"(CW score={score_cw}, CCW score={score_ccw}).")
+    elif osd_angle != 0:
+        print(f"OSD suggested {osd_angle}° but confidence={osd_conf:.2f} < {OSD_MIN_CONFIDENCE} — skipped.")
 
     return img
 
@@ -382,21 +380,23 @@ def recognise_line(pil_image: Image.Image, processor, model, device) -> tuple:
     pixel_values = processor(images=pil_image, return_tensors="pt").pixel_values.to(device)
     with torch.no_grad():
         outputs = model.generate(
-            pixel_values, 
-            max_new_tokens=64,
-            num_beams=4,
+            pixel_values,
+            max_new_tokens=128,        # longer lines won't get truncated
+            num_beams=5,               # extra beam improves word accuracy
             early_stopping=True,
-            no_repeat_ngram_size=2,
+            no_repeat_ngram_size=3,    # suppress repeated 3-grams
+            repetition_penalty=1.3,    # penalise repeated words / hallucinations
+            length_penalty=1.0,        # neutral length bias
             return_dict_in_generate=True,
             output_scores=True
         )
     ids = outputs.sequences
     text = processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
-    
+
     conf_score = 1.0
     if hasattr(outputs, "sequences_scores") and outputs.sequences_scores is not None:
         conf_score = torch.exp(outputs.sequences_scores[0]).item()
-        
+
     return text, conf_score
 
 
@@ -458,8 +458,23 @@ def check_review_required(text: str, conf_score: float, crop_w: int) -> tuple:
     return False, ""
 
 
-def run_pipeline(image_path: str, out_dir: str, target_width: int = 1200, min_line_height: int = 15):
-    """Run the complete end-to-end handwriting recognition pipeline."""
+def run_pipeline(
+    image_path: str,
+    out_dir: str,
+    target_width: int = 1200,
+    min_line_height: int = 15,
+    processor=None,
+    model=None,
+):
+    """Run the complete end-to-end handwriting recognition pipeline.
+
+    Parameters
+    ----------
+    processor, model : optional
+        Pre-loaded TrOCR processor and model.  When provided (e.g. cached via
+        ``@st.cache_resource`` in the Streamlit app), the heavy model-load step
+        is skipped, making subsequent runs significantly faster.
+    """
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image not found: {image_path}")
 
@@ -502,7 +517,7 @@ def run_pipeline(image_path: str, out_dir: str, target_width: int = 1200, min_li
         crop_bgr = page[y1:y2, x1:x2]
         status, reason = categorize_crop(crop_bgr)
         statuses.append((status, reason))
-        
+
         if status in ("accepted", "uncertain"):
             processed.append((i, (y1, y2, x1, x2), status))
         else:
@@ -520,10 +535,15 @@ def run_pipeline(image_path: str, out_dir: str, target_width: int = 1200, min_li
     print(f"Total lines sent to TrOCR: {len(processed)}")
     print()
 
-    # ── Step 4: Load recogniser ────────────────────────────────────────
-    print("Loading TrOCR (microsoft/trocr-large-handwritten) …")
-    processor, model = load_recogniser(device)
-    print("Model loaded.\n")
+    # ── Step 4: Load recogniser (skip if already provided) ────────────
+    if processor is None or model is None:
+        print("Loading TrOCR (microsoft/trocr-large-handwritten) …")
+        processor, model = load_recogniser(device)
+        print("Model loaded.\n")
+    else:
+        # Ensure the cached model is on the right device
+        model.to(device)
+        print("Using pre-loaded TrOCR model.\n")
 
     # ── Step 5: Recognise each accepted line ───────────────────────────
     results = []

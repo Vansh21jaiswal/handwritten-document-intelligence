@@ -8,8 +8,6 @@ from PIL import Image
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
-# Import the ML pipeline (Must use TrOCR-Large as instructed)
-from scripts.run_handwriting_demo import run_pipeline
 
 # PDF and DOCX generation
 from fpdf import FPDF
@@ -140,6 +138,39 @@ def handwritten_code_ocr(image_path: str) -> str:
         return f"Error connecting to Cloud AI for Code Recognition: {str(e)}"
 
 
+def handwritten_prose_ocr(image_path: str) -> str:
+    """OCR pipeline for handwritten prose / notebook notes using Gemini Flash.
+
+    Much faster than TrOCR-Large on Streamlit Cloud (no local model to load,
+    ~3-5 s per page via API) and handles varied handwriting styles well.
+    """
+    import google.generativeai as genai
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return (
+            "Error: GEMINI_API_KEY environment variable is not set.\n"
+            "Add it in your Streamlit Cloud app settings under Secrets."
+        )
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+
+    pil_img = Image.open(image_path)
+    prompt = (
+        "This is a photograph of a handwritten notebook page. "
+        "Transcribe ALL the handwritten text exactly as written, line by line, "
+        "preserving the original reading order from top to bottom. "
+        "If a word is unclear, make your best guess — do NOT skip it. "
+        "Output ONLY the transcribed text, with each line of handwriting on its own line. "
+        "Do NOT add any commentary, headings, or markdown formatting."
+    )
+
+    try:
+        response = model.generate_content([prompt, pil_img])
+        return response.text.strip()
+    except Exception as e:
+        return f"Error connecting to Gemini API: {str(e)}"
 
 
 st.set_page_config(page_title="Handwritten Notes to Text", layout="wide")
@@ -279,11 +310,10 @@ if not st.session_state.processed:
                         except Exception as e:
                             st.error(f"Error during extraction: {str(e)}")
                 else:
-                    with st.spinner("Reading your handwriting (word level)..."):
+                    with st.spinner("Reading your handwriting (using Gemini AI)…"):
                         try:
-                            out_dir = os.path.join(project_root, "outputs", "demo", "app_results")
-                            res = run_pipeline(temp_path, out_dir=out_dir)
-                            st.session_state.res = res
+                            text = handwritten_prose_ocr(temp_path)
+                            st.session_state.printed_text = text
                             st.session_state.processed = True
                             st.rerun()
                         except Exception as e:
