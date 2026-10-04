@@ -1,378 +1,178 @@
 import os
 import sys
-import io
+import time
+import cv2
+import numpy as np
+from PIL import Image
 import streamlit as st
 import streamlit.components.v1 as components
-from PIL import Image
 
+# Ensure imports work regardless of execution directory
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
-# ─── ML Pipeline ──────────────────────────────────────────────────────────────
-from scripts.run_handwriting_demo import run_pipeline, load_recogniser
-import torch
+# Import our new decoupled backend components
+from app.preprocessing.validator import ImageValidator
+from app.preprocessing.segmentation import ImageSegmenter
+from app.extraction.structured import StructuredExtractor
 
-# ─── PDF and DOCX generation ─────────────────────────────────────────────────
-from fpdf import FPDF
-from docx import Document
-from docx.shared import Pt, Inches
+# Caching the OCR models so they load instantly on subsequent requests
+@st.cache_resource(show_spinner="Loading Deep Learning Model (First Run Only)...")
+def load_trocr():
+    from app.ocr.trocr_engine import TrOCREngine
+    engine = TrOCREngine()
+    engine.load_model()
+    return engine
 
+@st.cache_resource(show_spinner="Initializing Traditional OCR...")
+def load_tesseract():
+    from app.ocr.tesseract_engine import TesseractEngine
+    engine = TesseractEngine()
+    engine.load_model()
+    return engine
 
-# ─── Cached model loader ─────────────────────────────────────────────────────
-@st.cache_resource(show_spinner="Loading handwriting recognition model (first run only)…")
-def load_trocr_model():
-    """Load TrOCR-Base once and cache it for the entire session.
+# Initialize global components
+validator = ImageValidator()
+segmenter = ImageSegmenter()
+extractor = StructuredExtractor()
 
-    On Hugging Face Spaces (16 GB RAM) this takes ~10-15 s on the very first
-    request.  Every subsequent call returns the cached objects instantly.
-    """
-    device = torch.device("cpu")
-    processor, model = load_recogniser(device)
-    return processor, model
+st.set_page_config(page_title="Intelligent Document Recognition", layout="wide")
 
-
-# ─── Helper functions ─────────────────────────────────────────────────────────
-
-def _sanitise_for_pdf(text: str) -> str:
-    """Replace characters that the default FPDF Latin-1 font cannot render."""
-    replacements = {
-        "\u2192": "->",   # →
-        "\u2190": "<-",   # ←
-        "\u2194": "<->",  # ↔
-        "\u2022": "-",    # •
-        "\u2026": "...",  # …
-        "\u201c": '"',    # "
-        "\u201d": '"',    # "
-        "\u2018": "'",    # '
-        "\u2019": "'",    # '
-        "\u2013": "-",    # –
-        "\u2014": "--",   # —
-        "\u2260": "!=",   # ≠
-        "\u2264": "<=",   # ≤
-        "\u2265": ">=",   # ≥
-        "\u00d7": "x",    # ×
-        "\u00f7": "/",    # ÷
-        "\u2713": "OK",   # ✓
-        "\u26a0": "(!)",  # ⚠
-        "\u00a0": " ",    # non-breaking space
-    }
-    for char, replacement in replacements.items():
-        text = text.replace(char, replacement)
-    # Final safety net: encode to latin-1, replacing anything still unhandled
-    return text.encode("latin-1", errors="replace").decode("latin-1")
-
-
-def generate_pdf(text: str, title: str = "Handwritten Notes Transcription") -> bytes:
-    """Convert plain text into a PDF and return bytes."""
-    safe_title = _sanitise_for_pdf(title)
-    safe_text  = _sanitise_for_pdf(text)
-
-    pdf = FPDF()
-    pdf.set_margins(left=20, top=20, right=20)
-    pdf.set_auto_page_break(auto=True, margin=20)
-    pdf.add_page()
-
-    # Title
-    pdf.set_font("Helvetica", style="B", size=16)
-    pdf.cell(0, 10, safe_title, new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(4)
-
-    # Body — one line at a time so line breaks are preserved
-    pdf.set_font("Helvetica", size=12)
-    for line in safe_text.split("\n"):
-        content = line if line.strip() else " "
-        pdf.multi_cell(0, 8, content, new_x="LMARGIN", new_y="NEXT")
-
-    return bytes(pdf.output())
-
-
-def generate_docx(text: str, title: str = "Handwritten Notes Transcription") -> bytes:
-    """Convert plain text into a Word .docx and return bytes."""
-    doc = Document()
-    # Title paragraph
-    title_para = doc.add_heading(title, level=1)
-    if title_para.runs:
-        title_para.runs[0].font.size = Pt(18)
-    doc.add_paragraph("")  # blank line
-    # Body
-    for line in text.split("\n"):
-        p = doc.add_paragraph(line)
-        if p.runs:
-            p.runs[0].font.size = Pt(12)
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
-
-
-def printed_ocr(image_path: str) -> str:
-    """Run Tesseract OCR on a printed/digital document image and return the extracted text."""
-    import pytesseract
-    pil_img = Image.open(image_path).convert("RGB")
-    custom_config = r"--oem 3 --psm 3"
-    text = pytesseract.image_to_string(pil_img, config=custom_config)
-    return text.strip()
-
-
-# ─── Streamlit UI ─────────────────────────────────────────────────────────────
-
-st.set_page_config(page_title="Handwritten Notes to Text", layout="wide")
-
-# Custom CSS for sensible max widths, compact image previews, and clean design
+# Custom CSS for polished UI
 st.markdown("""
     <style>
-    .main .block-container {
-        max-width: 1000px;
-        padding-top: 3rem;
-        padding-bottom: 3rem;
-        margin: 0 auto;
-    }
-    .hero-title {
-        text-align: center;
-        font-weight: 800;
-        font-size: 2.5rem;
-        margin-bottom: 0.5rem;
-    }
-    .hero-subtitle {
-        text-align: center;
-        font-size: 1.2rem;
-        color: #666;
-        margin-bottom: 3rem;
-    }
-    .upload-card {
-        border: 2px dashed #ddd;
-        border-radius: 10px;
-        padding: 2rem;
-        text-align: center;
-    }
-    .preview-img img {
-        max-height: 400px;
-        object-fit: contain;
-        border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .doc-preview-img img {
-        max-height: 600px;
-        object-fit: contain;
-        border-radius: 8px;
-        border: 1px solid #eee;
-    }
+    .main .block-container { max-width: 1100px; padding-top: 2rem; }
+    .hero-title { text-align: center; font-weight: 800; font-size: 2.2rem; margin-bottom: 0.5rem; }
+    .hero-subtitle { text-align: center; font-size: 1.1rem; color: #555; margin-bottom: 2rem; }
+    .status-high { color: #0f8243; font-weight: bold; }
+    .status-low { color: #d97706; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-# -----------------------------------------
-# HERO SECTION
-# -----------------------------------------
-st.markdown("<div class='hero-title'>DOCUMENT TEXT EXTRACTOR</div>", unsafe_allow_html=True)
-st.markdown("<div class='hero-subtitle'>Extract text from handwritten notes or printed documents.<br>Supports notebook pages, certificates, ID cards, and more.</div>", unsafe_allow_html=True)
+st.markdown("<div class='hero-title'>Intelligent Handwritten Document Recognition</div>", unsafe_allow_html=True)
+st.markdown("<div class='hero-subtitle'>End-to-end AIML pipeline demonstrating CV preprocessing, Deep Learning OCR, and structured data extraction.</div>", unsafe_allow_html=True)
 
-# -----------------------------------------
-# MODE SELECTOR
-# -----------------------------------------
-mode = st.radio(
-    "Choose document type:",
-    ["✍️  Handwritten Notes (Prose)", "💻  Handwritten Code / Math", "🖨️  Printed / Digital Document"],
-    horizontal=True,
-    label_visibility="visible"
-)
-is_printed = mode.startswith("🖨️")
-is_code = mode.startswith("💻")
-
-st.markdown("---")
-
-# -----------------------------------------
-# UPLOAD SECTION
-# -----------------------------------------
-if 'processed' not in st.session_state:
-    st.session_state.processed = False
-    st.session_state.res = None
-    st.session_state.temp_path = None
-    st.session_state.mode = None
-    st.session_state.printed_text = None
-
-# Reset if user switches mode after processing
-if st.session_state.get('mode') != mode:
-    st.session_state.processed = False
-    st.session_state.res = None
-    st.session_state.temp_path = None
-    st.session_state.printed_text = None
-    st.session_state.mode = mode
-
-# If not processed yet, show upload section prominently
-if not st.session_state.processed:
-    if is_printed:
-        st.markdown("### Upload your document")
-        st.markdown("Choose a clear photo or scan of a printed document — certificate, ID card, letter, book page, etc.")
-    elif is_code:
-        st.markdown("### Upload your handwritten code")
-        st.markdown("Choose a clear photo of handwritten programming code or math.")
-    else:
-        st.markdown("### Upload your handwritten page")
-        st.markdown("Choose a clear photo of a handwritten notebook page.")
-
-    uploaded_file = st.file_uploader("Upload area", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
-
-    if uploaded_file is not None:
-        st.markdown("<div class='preview-img'>", unsafe_allow_html=True)
-        col_space1, col_img, col_space2 = st.columns([1, 2, 1])
-        with col_img:
-            st.image(uploaded_file, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.write("")
-
-        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
-        with col_btn2:
-            if st.button("Extract Text", use_container_width=True, type="primary"):
-                # Save temp file
-                temp_dir = os.path.join(project_root, "outputs", "demo")
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_path = os.path.join(temp_dir, "temp_uploaded.jpg")
-
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-
-                st.session_state.temp_path = temp_path
-
-                if is_printed:
-                    # ── PRINTED MODE: Tesseract (instant) ─────────────
-                    with st.spinner("Reading your document…"):
-                        try:
-                            text = printed_ocr(temp_path)
-                            st.session_state.printed_text = text
-                            st.session_state.processed = True
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error during extraction: {str(e)}")
-                else:
-                    # ── HANDWRITTEN MODE (Prose or Code): TrOCR pipeline ──
-                    spinner_msg = "Reading your handwritten code…" if is_code else "Reading your handwriting…"
-                    with st.spinner(spinner_msg):
-                        try:
-                            out_dir = os.path.join(project_root, "outputs", "demo", "app_results")
-                            trocr_processor, trocr_model = load_trocr_model()
-                            res = run_pipeline(
-                                temp_path,
-                                out_dir=out_dir,
-                                processor=trocr_processor,
-                                model=trocr_model,
-                            )
-                            st.session_state.res = res
-                            st.session_state.processed = True
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error during extraction: {str(e)}")
-
-
-# -----------------------------------------
-# RESULTS SECTION — shared download helper
-# -----------------------------------------
-def _download_buttons(final_text: str):
-    btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
-    with btn_col1:
-        st.download_button("⬇ Download TXT", data=final_text,
-                           file_name="extracted_text.txt", mime="text/plain",
-                           use_container_width=True)
-    with btn_col2:
-        pdf_bytes = generate_pdf(final_text)
-        st.download_button("⬇ Download PDF", data=pdf_bytes,
-                           file_name="extracted_text.pdf", mime="application/pdf",
-                           use_container_width=True)
-    with btn_col3:
-        docx_bytes = generate_docx(final_text)
-        st.download_button("⬇ Download Word", data=docx_bytes,
-                           file_name="extracted_text.docx",
-                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                           use_container_width=True)
-    with btn_col4:
-        safe_text = final_text.replace('`', '\\`')
-        copy_html = f"""
-        <script>
-        function copyToClipboard() {{
-            navigator.clipboard.writeText(`{safe_text}`);
-            document.getElementById('copyBtn').innerText = 'Copied!';
-            setTimeout(() => document.getElementById('copyBtn').innerText = '📋 Copy Text', 2000);
-        }}
-        </script>
-        <button id="copyBtn" onclick="copyToClipboard()" style="width:100%; padding:0.5rem 1rem; background-color:#f0f2f6; border:1px solid #c4c4c4; border-radius:0.25rem; font-family:sans-serif; cursor:pointer;">📋 Copy Text</button>
-        """
-        components.html(copy_html, height=45)
-
-
-if st.session_state.processed:
-    temp_path = st.session_state.temp_path
-    st.success("Text extracted successfully.")
+# ─── Sidebar Config ────────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("Pipeline Configuration")
+    
+    selected_model = st.radio(
+        "Select OCR Engine",
+        ["Deep Learning (TrOCR)", "Traditional Baseline (Tesseract)"],
+        help="Compare performance between Traditional CV and Deep Learning."
+    )
+    
     st.markdown("---")
+    st.markdown("**Image Preprocessing**")
+    run_validation = st.checkbox("Run Quality Validation", value=True)
+    run_segmentation = st.checkbox("Run Line Segmentation (HPP)", value=True, help="Crucial for handwriting. Can disable for clean printed text.")
+    
+    st.markdown("---")
+    st.markdown("**Structured Extraction**")
+    run_extraction = st.checkbox("Extract JSON Entities", value=True)
 
-    # ── PRINTED MODE RESULTS (simple text view) ──────────────────────
-    if st.session_state.printed_text is not None:
-        final_text = st.session_state.printed_text
 
-        res_col1, res_col2 = st.columns([1.2, 1])
-        with res_col1:
-            st.subheader("Your document")
-            st.markdown("<div class='doc-preview-img'>", unsafe_allow_html=True)
-            st.image(temp_path, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+# ─── Main Upload ────────────────────────────────────────────────────────────
+uploaded_file = st.file_uploader("Upload Document (Handwritten Notes, Forms, Printed Docs)", type=["jpg", "jpeg", "png"])
 
-        with res_col2:
-            st.subheader("Your extracted text")
-            st.text_area("Extracted text", value=final_text, height=450, label_visibility="collapsed")
-            _download_buttons(final_text)
+if uploaded_file is not None:
+    # 1. Load Image
+    image_bytes = uploaded_file.read()
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    image_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    
+    col_img, col_results = st.columns([1, 1.2], gap="large")
+    
+    with col_img:
+        st.subheader("Input Image")
+        st.image(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB), use_container_width=True)
+        
+        # 2. Image Validation
+        if run_validation:
+            with st.expander("Image Quality Metrics", expanded=True):
+                val_res = validator.validate(image_bgr)
+                m = val_res["metrics"]
+                st.write(f"**Resolution:** {m.get('width', 0)} x {m.get('height', 0)}")
+                st.write(f"**Blur Score (Laplacian):** {m.get('blur_score', 0)}")
+                st.write(f"**Contrast Score (STD):** {m.get('contrast_score', 0)}")
+                
+                if not val_res["is_valid"]:
+                    st.error(f"Validation Failed: {val_res['reason']}")
+                    st.stop()
+                else:
+                    st.success("Image quality is acceptable.")
 
-    # ── HANDWRITTEN MODE RESULTS (rich pipeline view) ────────────────
-    elif st.session_state.res is not None:
-        res = st.session_state.res
+    with col_results:
+        if st.button("Run Recognition Pipeline", type="primary", use_container_width=True):
+            
+            with st.spinner("Processing pipeline..."):
+                t0 = time.time()
+                
+                engine = load_trocr() if "Deep Learning" in selected_model else load_tesseract()
+                
+                final_text = ""
+                avg_conf = 0.0
+                lines_data = []
+                
+                # 3. Preprocessing & OCR
+                if run_segmentation and "Deep Learning" in selected_model:
+                    page = segmenter.normalise_page(image_bgr)
+                    boxes = segmenter.detect_lines(page)
+                    
+                    confidences = []
+                    for i, (y1, y2, x1, x2) in enumerate(boxes):
+                        crop_bgr = page[y1:y2, x1:x2]
+                        status, reason = segmenter.categorize_crop(crop_bgr)
+                        
+                        if status in ["accepted", "uncertain"]:
+                            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+                            pil_crop = Image.fromarray(crop_rgb)
+                            
+                            text, conf = engine.predict(pil_crop)
+                            lines_data.append({"text": text, "conf": conf, "status": status})
+                            confidences.append(conf)
+                            
+                    final_text = "\n".join([l["text"] for l in lines_data])
+                    avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+                else:
+                    # Tesseract handles full page
+                    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                    pil_img = Image.fromarray(image_rgb)
+                    final_text, avg_conf = engine.predict(pil_img)
+                
+                proc_time = time.time() - t0
+                
+            # ─── Display Results ──────────────────────────────────────────────
+            st.subheader("Recognition Results")
+            
+            # Metrics Row
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Processing Time", f"{proc_time:.2f} s")
+            
+            # Confidence formatting
+            conf_pct = int(avg_conf * 100)
+            if conf_pct > 80:
+                conf_str = f"<span class='status-high'>{conf_pct}% (High)</span>"
+            elif conf_pct > 50:
+                conf_str = f"<span class='status-low'>{conf_pct}% (Moderate)</span>"
+            else:
+                conf_str = f"<span style='color:red; font-weight:bold;'>{conf_pct}% (Low)</span>"
+                st.warning("Low confidence prediction. Result may require manual verification.")
+                
+            m2.markdown(f"**Confidence:**<br>{conf_str}", unsafe_allow_html=True)
+            m3.metric("Model", "TrOCR" if "Deep" in selected_model else "Tesseract")
 
-        res_col1, res_col2 = st.columns([1.2, 1])
-
-        with res_col1:
-            st.subheader("Your document")
-            st.markdown("<div class='doc-preview-img'>", unsafe_allow_html=True)
-            st.image(temp_path, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.write("")
-            with st.expander("View detected lines"):
-                st.image(res['debug_path'], use_container_width=True)
-                st.caption("Green = recognized lines\n\nYellow = lines that may need review\n\nRed = ignored background or non-writing areas.")
-
-        with res_col2:
-            st.subheader("Your extracted text")
-            num_accepted = res['results']['num_accepted_lines']
-            num_review = res['results']['num_review_lines']
-            num_recognized = num_accepted - num_review
-            st.markdown(f"**✓ {num_recognized} lines recognized**")
-            if num_review > 0:
-                st.markdown(f"**⚠ {num_review} lines may need review**")
-
-            final_text = res['results']['final_transcription']
-            st.text_area("Final text", value=final_text, height=350, label_visibility="collapsed")
-            _download_buttons(final_text)
-
-            with st.expander("More options"):
-                with open(res['json_path'], 'r') as f:
-                    json_data = f.read()
-                st.download_button("Download JSON", data=json_data, file_name="result.json",
-                                   mime="application/json")
-
-            st.write("")
-            with st.expander("Review individual lines"):
-                for line_data in res['results']['lines']:
-                    st.markdown(f"**Line {line_data['line_number']}**")
-                    st.image(line_data['crop_path'])
-                    if line_data.get('review_required', False):
-                        st.warning("⚠ Needs review")
-                    else:
-                        st.success("✓ Recognized")
-                    st.text_input(f"Edit line {line_data['line_number']}",
-                                  value=line_data['text'],
-                                  key=f"edit_{line_data['line_number']}",
-                                  label_visibility="collapsed")
-                    st.markdown("---")
-
-    st.write("")
-    if st.button("Start Over"):
-        st.session_state.processed = False
-        st.session_state.res = None
-        st.session_state.temp_path = None
-        st.session_state.printed_text = None
-        st.rerun()
+            # Raw Text
+            st.text_area("Extracted Text", value=final_text, height=250)
+            
+            # 4. Structured Extraction
+            if run_extraction:
+                st.subheader("Structured Extraction")
+                structured_data = extractor.extract(final_text)
+                if not any(structured_data.values()):
+                    st.info("No structured entities (Dates, Amounts, Phones, Emails) detected.")
+                else:
+                    st.json(structured_data)
+                    
+            # Export
+            st.download_button("Download Text", data=final_text, file_name="extraction.txt", use_container_width=True)

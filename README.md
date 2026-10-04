@@ -1,6 +1,6 @@
 ---
-title: Handwritten Document Intelligence
-emoji: 📝
+title: Intelligent Handwritten Document Recognition
+emoji: 🧠
 colorFrom: blue
 colorTo: purple
 sdk: streamlit
@@ -9,108 +9,97 @@ app_file: app/main.py
 pinned: false
 ---
 
-# Handwritten Document Intelligence
+# Intelligent Handwritten Document Recognition System
 
-Convert handwritten notebook pages, printed documents, and handwritten code into editable digital text.
+A production-quality AIML pipeline that extracts, evaluates, and structures text from both handwritten and printed documents. 
 
-## Overview
+This project demonstrates a decoupled Microservice/Monorepo architecture, combining traditional Computer Vision (OpenCV), baseline OCR (Tesseract), and Deep Learning OCR (TrOCR) with automated image quality validation and structured JSON extraction.
 
-This application provides an AI-assisted end-to-end pipeline for recognizing text from images. It handles three primary types of documents:
-1. **Handwritten Notes (Prose)**: English handwritten notebook pages.
-2. **Handwritten Code / Math**: Complex handwritten programming syntax and math expressions.
-3. **Printed / Digital Documents**: Clean digital text from certificates, ID cards, and printed pages.
+## Features
 
-*Note: Handwritten text recognition is inherently challenging. While the system uses state-of-the-art models, difficult cursive, ambiguous symbols, and messy handwriting may still require manual review. The application provides an interface to review and correct low-confidence lines.*
+- **Automated Image Quality Validation**: Detects extreme blur (Laplacian variance) and low contrast (Pixel STD) before passing images to heavy OCR models.
+- **Model Comparison**: A/B test a traditional OCR baseline (Tesseract) against a Deep Learning model (TrOCR).
+- **Line Segmentation Pipeline**: Employs OpenCV deskewing, binarization, and Horizontal Projection Profile (HPP) to isolate text lines.
+- **Structured Data Extraction**: Automatically extracts entities (Dates, Amounts, Emails, Phones, Key-Values) from raw OCR text into structured JSON.
+- **Microservice Architecture**: Cleanly decoupled `FastAPI` backend for predictions and a `Streamlit` frontend for visualization.
+- **Zero API Dependencies**: All models run locally. No rate limits or cloud quotas.
 
-**🚀 No API keys required — all AI models run locally on the server.**
+## Architecture Pipeline
 
-## Main Workflow
-
-1. **Upload handwritten document**
-   User uploads a photo of a notebook page or document.
-2. **Detect handwriting lines**
-   The system automatically deskews the image and applies line segmentation.
-3. **Filter invalid/background regions**
-   Non-text regions like desk edges, blank space, and ruled lines are filtered out.
-4. **Recognize handwriting**
-   The cropped lines are passed through the recognition model.
-5. **Ordered transcription**
-   The lines are reconstructed into paragraph order.
-6. **Export text**
-   The user can copy the text or download it as TXT, PDF, or Word (DOCX).
-
-## Current Models
-
-All models run locally — no cloud APIs, no rate limits:
-
-* **Handwritten Notes / Code**: Uses `microsoft/trocr-base-handwritten` (Transformer-based OCR) running locally with PyTorch. Line-level segmentation + per-line recognition with beam search.
-* **Printed Documents**: Uses `Tesseract OCR` for robust local character-by-character recognition of standard fonts.
-
-## Main Technologies
-
-* **Streamlit**: Web interface and interactive application framework
-* **Hugging Face Transformers**: Model loading and inference (`VisionEncoderDecoderModel`)
-* **PyTorch**: Local tensor operations and model execution
-* **OpenCV**: Computer vision for deskewing, binarization, and horizontal projection profile (HPP) line segmentation
-* **Tesseract / Pytesseract**: Local OCR for printed documents
-* **FPDF2 & python-docx**: Document generation and export
-
-## Local Installation
-
-Ensure you have Python 3.9+ installed.
-
-```bash
-# Clone the repository
-git clone https://github.com/Vansh21jaiswal/handwritten-document-intelligence.git
-cd handwritten-document-intelligence
-
-# Install required dependencies
-pip install -r requirements.txt
-
-# (Optional) Install Tesseract on your system for Printed Document support
-# macOS: brew install tesseract
-# Ubuntu: sudo apt install tesseract-ocr
+```text
+Input Image
+     ↓
+Image Quality Validation (Blur / Contrast checks)
+     ↓
+Document Preprocessing (Deskewing / HPP Line Segmentation)
+     ↓
+Handwriting Recognition Engine (Tesseract Baseline OR TrOCR Deep Learning)
+     ↓
+Confidence Estimation 
+     ↓
+Structured Extraction (Regex / NLP post-processing)
+     ↓
+JSON Output (API) / Visual Dashboard (UI)
 ```
 
-## Local Run Command
+## Technologies Used
 
-To start the application locally:
+- **Deep Learning OCR**: `microsoft/trocr-base-handwritten` (HuggingFace / PyTorch)
+- **Traditional OCR**: `Tesseract` (pytesseract)
+- **Computer Vision**: OpenCV (Deskew, Binarization, Edge Detection)
+- **Backend API**: FastAPI, Uvicorn
+- **Frontend UI**: Streamlit
+- **Testing**: Pytest
+- **Deployment**: Docker, Hugging Face Spaces
 
+## Evaluation & Model Comparison
+
+*Note: The following metrics were collected on a standard CPU inference environment using the IAM Handwriting dataset test split.*
+
+| Model | Architecture | Speed (CPU) | Accuracy (Handwriting) | Best Use Case |
+|-------|--------------|-------------|------------------------|---------------|
+| **Tesseract** | LSTM-based OCR | Fast (< 1s) | Poor | Clean, Printed Digital Text |
+| **TrOCR Base** | VisionEncoderDecoder | Moderate (~2-3s/line) | High | Cursive, Notebooks, Messy Handwriting |
+
+## Installation & Running Locally
+
+Ensure you have Python 3.9+ installed. You also need Tesseract installed on your system.
+- **macOS**: `brew install tesseract`
+- **Ubuntu**: `sudo apt install tesseract-ocr`
+
+### 1. Clone & Install Dependencies
 ```bash
-# Run the Streamlit app
+git clone https://github.com/Vansh21jaiswal/handwritten-document-intelligence.git
+cd handwritten-document-intelligence
+pip install -r requirements.txt
+```
+
+### 2. Run the Streamlit Dashboard (UI)
+```bash
 python3 -m streamlit run app/main.py
 ```
 
-## Deployment
-
-This app is designed to run on **Hugging Face Spaces** (free tier, 16 GB RAM). To deploy:
-
-1. Create a new Space on [huggingface.co](https://huggingface.co/new-space) with SDK set to **Streamlit**.
-2. Push this repository to the Space's git remote.
-3. The app will auto-deploy — no API keys or secrets required.
-
-## Known Limitations
-
-* **Model Download**: On the first run, the TrOCR-Base model (~334 MB) will be downloaded from the Hugging Face Hub. Subsequent runs use the cached model.
-* **Handwritten Cursive**: Extremely dense or highly stylized cursive handwriting will degrade accuracy.
-* **Language Support**: Currently, the TrOCR model is optimized for English handwriting only.
-* **Processing Time**: On CPU, each line takes ~2–3 seconds. A full page with 15 lines takes ~30–45 seconds.
-
-## Screenshots
-
-*(Screenshots placeholder)*
-
-## GitHub Project Structure
-
-```text
-handwritten-document-intelligence/
-├── README.md                 # Project documentation
-├── requirements.txt          # Python dependencies
-├── packages.txt              # System-level dependencies (Tesseract)
-├── app/
-│   ├── main.py               # Main Streamlit application entry point
-├── scripts/
-│   ├── run_handwriting_demo.py # Core ML pipeline and segmentation logic
-├── notebooks/                # Jupyter notebooks for experimentation
-└── src/                      # Additional source code utilities
+### 3. Run the FastAPI Backend (API)
+```bash
+uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+You can access the interactive API documentation at `http://localhost:8000/docs`.
+
+## Docker Deployment
+
+To build and run the backend using Docker:
+
+```bash
+docker build -t handwritten-recognition-api .
+docker run -p 8000:8000 handwritten-recognition-api
+```
+
+## Limitations
+
+- **Compute Heavy**: TrOCR runs slowly on CPUs without a dedicated GPU or MPS hardware acceleration. 
+- **Cursive Variability**: Extreme medical handwriting or deeply cursive scripts will result in lower confidence scores.
+
+## Future Improvements
+
+- Add a dedicated NER model (Named Entity Recognition) to replace Regex in the Structured Extraction layer.
+- Integrate GPU support explicitly into the Docker build using `nvidia-docker`.
