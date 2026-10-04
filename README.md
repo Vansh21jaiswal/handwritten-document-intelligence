@@ -11,95 +11,96 @@ pinned: false
 
 # Intelligent Handwritten Document Recognition System
 
-A production-quality AIML pipeline that extracts, evaluates, and structures text from both handwritten and printed documents. 
+A production-quality AIML pipeline that extracts, evaluates, and structures text from handwritten, printed, and code documents.
 
-This project demonstrates a decoupled Microservice/Monorepo architecture, combining traditional Computer Vision (OpenCV), baseline OCR (Tesseract), and Deep Learning OCR (TrOCR) with automated image quality validation and structured JSON extraction.
+## Overview
+This project converts physical document images into usable, structured digital data. It is engineered with a decoupled Microservice/Monorepo architecture, combining traditional Computer Vision (OpenCV), baseline OCR (Tesseract), and Cloud AI (Gemini Vision) with automated image quality validation and structured JSON extraction.
+
+## Problem Statement
+Converting handwritten notes, printed documents, and handwritten source code into editable digital text is challenging due to handwriting variability, messy backgrounds, and uneven lighting. Most OCR solutions fail on cursive or complex mathematical/programming syntax. This system solves that by integrating CV preprocessing with state-of-the-art AI.
 
 ## Features
-
-- **Automated Image Quality Validation**: Detects extreme blur (Laplacian variance) and low contrast (Pixel STD) before passing images to heavy OCR models.
-- **Model Comparison**: A/B test a traditional OCR baseline (Tesseract) against a Deep Learning model (TrOCR).
-- **Line Segmentation Pipeline**: Employs OpenCV deskewing, binarization, and Horizontal Projection Profile (HPP) to isolate text lines.
-- **Structured Data Extraction**: Automatically extracts entities (Dates, Amounts, Emails, Phones, Key-Values) from raw OCR text into structured JSON.
-- **Microservice Architecture**: Cleanly decoupled `FastAPI` backend for predictions and a `Streamlit` frontend for visualization.
-- **Zero API Dependencies**: All models run locally. No rate limits or cloud quotas.
+- **Handwritten Recognition**: Extracts English handwriting with high fidelity.
+- **Printed Text Recognition**: Baseline OCR for digital forms and certificates.
+- **Code Recognition**: Accurately extracts handwritten programming syntax, preserving formatting.
+- **Automatic Document Type Detection**: Heuristically detects Source Code, Forms, or General Text.
+- **Image Quality Analysis**: Detects extreme blur (Laplacian variance) and low contrast (Pixel STD) before recognition.
+- **Preprocessing Pipeline**: OpenCV deskewing, binarization, and Horizontal Projection Profile (HPP) line segmentation.
+- **Structured Extraction**: Extracts Dates, Amounts, Emails, Phones, and Key-Values into JSON via Regex NLP processing.
+- **Export System**: Export results to TXT, editable DOCX, professional PDF, and machine-readable JSON.
+- **Model Comparison**: Swap between Traditional OCR (Tesseract) and AI Recognition.
 
 ## Architecture Pipeline
 
 ```text
 Input Image
      ↓
-Image Quality Validation (Blur / Contrast checks)
+Image Quality Analysis (Blur / Contrast checks)
      ↓
-Document Preprocessing (Deskewing / HPP Line Segmentation)
+Computer Vision Preprocessing (Deskewing / HPP Segmentation)
      ↓
-Handwriting Recognition Engine (Tesseract Baseline OR TrOCR Deep Learning)
+AI Recognition Engine (Tesseract or Gemini Vision)
      ↓
-Confidence Estimation 
+Text Post-Processing
      ↓
-Structured Extraction (Regex / NLP post-processing)
+Structured Extraction (Regex / NLP extraction)
      ↓
-JSON Output (API) / Visual Dashboard (UI)
+Results UI / Export (PDF, DOCX, JSON)
 ```
 
-## Technologies Used
+## Technology Stack
+- **Python** (Core Logic)
+- **Streamlit** (Frontend Dashboard)
+- **FastAPI / Uvicorn** (Backend Microservice structure)
+- **OpenCV** (Computer Vision Preprocessing)
+- **Tesseract (pytesseract)** (Traditional OCR)
+- **Gemini Vision (google-generativeai)** (Cloud AI Recognition)
+- **FPDF2 / python-docx** (Report Generation)
+- **Pytest** (Testing)
+- **Docker** (Containerization)
 
-- **Deep Learning OCR**: `microsoft/trocr-base-handwritten` (HuggingFace / PyTorch)
-- **Traditional OCR**: `Tesseract` (pytesseract)
-- **Computer Vision**: OpenCV (Deskew, Binarization, Edge Detection)
-- **Backend API**: FastAPI, Uvicorn
-- **Frontend UI**: Streamlit
-- **Testing**: Pytest
-- **Deployment**: Docker, Hugging Face Spaces
-
-## Evaluation & Model Comparison
-
-*Note: The following metrics were collected on a standard CPU inference environment using the IAM Handwriting dataset test split.*
-
-| Model | Architecture | Speed (CPU) | Accuracy (Handwriting) | Best Use Case |
-|-------|--------------|-------------|------------------------|---------------|
-| **Tesseract** | LSTM-based OCR | Fast (< 1s) | Poor | Clean, Printed Digital Text |
-| **TrOCR Base** | VisionEncoderDecoder | Moderate (~2-3s/line) | High | Cursive, Notebooks, Messy Handwriting |
+## Export Functionality
+- **TXT**: Clean raw text output.
+- **PDF**: Professional report containing metadata, confidence, structured information, and recognized text.
+- **DOCX**: Fully editable Word document preserving layout where applicable.
+- **JSON**: Machine-readable format for API integrations and database ingestion.
 
 ## Installation & Running Locally
 
-Ensure you have Python 3.9+ installed. You also need Tesseract installed on your system.
-- **macOS**: `brew install tesseract`
-- **Ubuntu**: `sudo apt install tesseract-ocr`
+Ensure you have Python 3.9+ installed, along with system-level Tesseract (`brew install tesseract` or `sudo apt install tesseract-ocr`).
 
-### 1. Clone & Install Dependencies
 ```bash
+# 1. Clone the repository
 git clone https://github.com/Vansh21jaiswal/handwritten-document-intelligence.git
 cd handwritten-document-intelligence
-pip install -r requirements.txt
-```
 
-### 2. Run the Streamlit Dashboard (UI)
-```bash
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Add Environment Variables (Create a secrets.toml or .env)
+# GEMINI_API_KEY="your_api_key_here"
+
+# 4. Run the Streamlit Application
 python3 -m streamlit run app/main.py
 ```
 
-### 3. Run the FastAPI Backend (API)
+## Deployment
+The application is containerized and ready for Hugging Face Spaces or Streamlit Community Cloud.
+
+**Live Demo:** [Streamlit Cloud Deployment](https://handwritten-document-intelligence-g6tcm8bjqvyvpe7osnxzmv.streamlit.app)
+
+To run the backend API via Docker:
 ```bash
-uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-You can access the interactive API documentation at `http://localhost:8000/docs`.
-
-## Docker Deployment
-
-To build and run the backend using Docker:
-
-```bash
-docker build -t handwritten-recognition-api .
-docker run -p 8000:8000 handwritten-recognition-api
+docker build -t intelligent-ocr .
+docker run -p 8000:8000 intelligent-ocr
 ```
 
 ## Limitations
-
-- **Compute Heavy**: TrOCR runs slowly on CPUs without a dedicated GPU or MPS hardware acceleration. 
-- **Cursive Variability**: Extreme medical handwriting or deeply cursive scripts will result in lower confidence scores.
+- **Image Quality Dependence**: Heavily blurred or overexposed images will significantly degrade recognition.
+- **Handwriting Ambiguity**: Extremely messy cursive may result in hallucinated characters.
+- **Confidence Metric**: Confidence scores provided by Cloud APIs are estimated and should not be interpreted as guaranteed mathematical accuracy (unlike localized token-probability metrics).
+- **Processing Time**: Cloud AI inference depends on internet latency and API quotas (e.g., 5-20 seconds).
 
 ## Future Improvements
-
-- Add a dedicated NER model (Named Entity Recognition) to replace Regex in the Structured Extraction layer.
-- Integrate GPU support explicitly into the Docker build using `nvidia-docker`.
+- Integrate a local Named Entity Recognition (NER) model (e.g., SpaCy) to replace Regex for more robust Structured Extraction.
+- Re-integrate localized PyTorch models (TrOCR) if deployed to GPU-accelerated cloud infrastructure.

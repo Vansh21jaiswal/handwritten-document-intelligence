@@ -11,17 +11,16 @@ import streamlit.components.v1 as components
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
-# Import our new decoupled backend components
+# Import backend components
 from app.preprocessing.validator import ImageValidator
 from app.preprocessing.segmentation import ImageSegmenter
 from app.extraction.structured import StructuredExtractor
+from app.utils.export import generate_pdf, generate_docx, generate_json
 
-# Caching the OCR models so they load instantly on subsequent requests
 @st.cache_resource(show_spinner="Connecting to Google Gemini Cloud...")
 def load_gemini():
     from app.ocr.gemini_engine import GeminiEngine
     engine = GeminiEngine()
-    # If on Streamlit Cloud, it will pull from st.secrets if environment variable isn't set
     if not os.environ.get("GEMINI_API_KEY") and "GEMINI_API_KEY" in st.secrets:
         os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
     engine.load_model()
@@ -44,139 +43,283 @@ st.set_page_config(page_title="Intelligent Document Recognition", layout="wide")
 # Custom CSS for polished UI
 st.markdown("""
     <style>
-    .main .block-container { max-width: 1100px; padding-top: 2rem; }
+    .main .block-container { max-width: 1200px; padding-top: 2rem; }
     .hero-title { text-align: center; font-weight: 800; font-size: 2.2rem; margin-bottom: 0.5rem; }
-    .hero-subtitle { text-align: center; font-size: 1.1rem; color: #555; margin-bottom: 2rem; }
+    .hero-subtitle { text-align: center; font-size: 1.1rem; color: #555; margin-bottom: 1.5rem; }
+    .workflow-steps { text-align: center; font-size: 1.2rem; font-weight: bold; color: #888; margin-bottom: 2rem; }
+    .workflow-active { color: #0f8243; }
     .status-high { color: #0f8243; font-weight: bold; }
     .status-low { color: #d97706; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<div class='hero-title'>Intelligent Handwritten Document Recognition</div>", unsafe_allow_html=True)
-st.markdown("<div class='hero-subtitle'>End-to-end AIML pipeline demonstrating CV preprocessing, Cloud AI OCR, and structured data extraction.</div>", unsafe_allow_html=True)
+# ─── TOP SECTION ────────────────────────────────────────────────────────────
+st.markdown("<div class='hero-title'>Intelligent Document Recognition</div>", unsafe_allow_html=True)
+st.markdown("<div class='hero-subtitle'>Transform handwritten, printed, and code images into searchable, structured text.</div>", unsafe_allow_html=True)
 
-# ─── Sidebar Config ────────────────────────────────────────────────────────
+st.markdown("""
+<div class='workflow-steps'>
+    <span class='workflow-active'>① Upload</span> &nbsp;→&nbsp; 
+    <span>② Analyze</span> &nbsp;→&nbsp; 
+    <span>③ Results</span>
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("<div style='text-align: center; color: #666;'>Supported: Handwritten Notes • Source Code • Printed Documents • Forms / IDs</div>", unsafe_allow_html=True)
+st.write("")
+
+# ─── SIDEBAR REDESIGN ───────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("Pipeline Configuration")
-    
+    st.header("Recognition")
     selected_model = st.radio(
-        "Select OCR Engine",
-        ["Cloud AI (Gemini Vision)", "Traditional Baseline (Tesseract)"],
-        help="Compare performance between Traditional CV and Cloud AI."
+        "OCR Engine:",
+        ["AI Recognition (Gemini)", "Traditional OCR (Tesseract)"],
+        label_visibility="collapsed"
     )
     
-    st.markdown("---")
-    st.markdown("**Image Preprocessing**")
-    run_validation = st.checkbox("Run Quality Validation", value=True)
-    run_segmentation = st.checkbox("Run Line Segmentation (HPP)", value=True, help="Crucial for handwriting. Can disable for clean printed text.")
+    st.header("Options")
+    run_validation = st.checkbox("Image Quality Check", value=True)
+    run_extraction = st.checkbox("Structured Information Extraction", value=True)
     
-    st.markdown("---")
-    st.markdown("**Structured Extraction**")
-    run_extraction = st.checkbox("Extract JSON Entities", value=True)
+    with st.expander("Advanced Settings"):
+        run_segmentation = st.checkbox("Line Segmentation (CV)", value=True, help="Applies HPP segmentation. Visualized in Technical Analysis.")
 
+# ─── MAIN UPLOAD ────────────────────────────────────────────────────────────
+if 'processed' not in st.session_state:
+    st.session_state.processed = False
+    st.session_state.results = {}
 
-# ─── Main Upload ────────────────────────────────────────────────────────────
-uploaded_file = st.file_uploader("Upload Document (Handwritten Notes, Forms, Printed Docs)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Upload your document (Drag and drop an image here or browse files)", type=["jpg", "jpeg", "png"])
 
-if uploaded_file is not None:
-    # 1. Load Image
-    image_bytes = uploaded_file.read()
-    np_arr = np.frombuffer(image_bytes, np.uint8)
-    image_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+if uploaded_file is not None and not st.session_state.processed:
+    st.image(uploaded_file, width=400)
     
-    col_img, col_results = st.columns([1, 1.2], gap="large")
-    
-    with col_img:
-        st.subheader("Input Image")
-        st.image(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB), use_container_width=True)
+    if st.button("Run Recognition Pipeline", type="primary", use_container_width=True):
         
-        # 2. Image Validation
+        # UI Update for Progress
+        st.markdown("""
+        <div class='workflow-steps'>
+            <span>① Upload</span> &nbsp;→&nbsp; 
+            <span class='workflow-active'>② Analyze</span> &nbsp;→&nbsp; 
+            <span>③ Results</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # 1. Load Image
+        status_text.text("Analyzing document...")
+        image_bytes = uploaded_file.read()
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        image_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        progress_bar.progress(10)
+        
+        # 2. Validation
         if run_validation:
-            with st.expander("Image Quality Metrics", expanded=True):
-                val_res = validator.validate(image_bgr)
-                m = val_res["metrics"]
-                st.write(f"**Resolution:** {m.get('width', 0)} x {m.get('height', 0)}")
-                st.write(f"**Blur Score (Laplacian):** {m.get('blur_score', 0)}")
-                st.write(f"**Contrast Score (STD):** {m.get('contrast_score', 0)}")
-                
-                if not val_res["is_valid"]:
-                    st.error(f"Validation Failed: {val_res['reason']}")
-                    st.stop()
-                else:
-                    st.success("Image quality is acceptable.")
+            status_text.text("✓ Image quality checked")
+            val_res = validator.validate(image_bgr)
+            st.session_state.validation = val_res
+            time.sleep(0.5)
+        progress_bar.progress(30)
+        
+        # 3. Preprocessing (CV)
+        status_text.text("✓ Image preprocessing completed")
+        page = segmenter.normalise_page(image_bgr)
+        st.session_state.processed_image = cv2.cvtColor(page, cv2.COLOR_BGR2RGB)
+        
+        boxes = []
+        if run_segmentation:
+            boxes = segmenter.detect_lines(page)
+        st.session_state.cv_boxes = boxes
+        progress_bar.progress(50)
+        
+        # 4. OCR
+        status_text.text("⟳ Recognizing text...")
+        t0 = time.time()
+        engine = load_gemini() if "AI Recognition" in selected_model else load_tesseract()
+        
+        # Both models process full page to avoid rate limiting
+        pil_img = Image.fromarray(st.session_state.processed_image)
+        final_text, avg_conf = engine.predict(pil_img)
+        proc_time = time.time() - t0
+        progress_bar.progress(80)
+        
+        # 5. Extraction & Document Type Detection
+        status_text.text("○ Extracting structured information")
+        doc_type = "General Text"
+        structured_data = {}
+        
+        if run_extraction:
+            structured_data = extractor.extract(final_text)
+            doc_type = extractor.detect_document_type(final_text)
+        else:
+            # Fallback heuristic if extraction disabled
+            doc_type = extractor.detect_document_type(final_text)
+            
+        progress_bar.progress(100)
+        status_text.text("✓ Analysis complete")
+        time.sleep(0.5)
+        
+        # Save to session state
+        st.session_state.results = {
+            "text": final_text,
+            "conf": avg_conf,
+            "time": proc_time,
+            "doc_type": doc_type,
+            "structured": structured_data,
+            "model_used": "Gemini Vision" if "AI" in selected_model else "Tesseract",
+            "original_image": image_bytes
+        }
+        st.session_state.processed = True
+        st.rerun()
 
-    with col_results:
-        if st.button("Run Recognition Pipeline", type="primary", use_container_width=True):
-            
-            with st.spinner("Processing pipeline..."):
-                t0 = time.time()
+# ─── RESULTS VIEW ───────────────────────────────────────────────────────────
+if st.session_state.processed:
+    st.markdown("""
+    <div class='workflow-steps'>
+        <span>① Upload</span> &nbsp;→&nbsp; 
+        <span>② Analyze</span> &nbsp;→&nbsp; 
+        <span class='workflow-active'>③ Results</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    res = st.session_state.results
+    
+    if st.button("← Upload Another Document"):
+        st.session_state.processed = False
+        st.session_state.results = {}
+        st.rerun()
+        
+    st.write("---")
+    
+    col_main, col_side = st.columns([2, 1], gap="large")
+    
+    with col_side:
+        # ANALYSIS SUMMARY
+        st.subheader("Analysis Summary")
+        st.write(f"**Document Type:** {res['doc_type']}")
+        st.write(f"**Recognition Model:** {res['model_used']}")
+        
+        # Confidence
+        conf_pct = int(res['conf'] * 100)
+        conf_label = "High" if conf_pct > 80 else "Moderate" if conf_pct > 50 else "Low"
+        st.write(f"**Estimated Confidence:** {conf_label} ⓘ", help="Estimated recognition confidence. This is not equivalent to measured OCR accuracy.")
+        
+        st.write(f"**Processing Time:** {res['time']:.2f} seconds")
+        
+        # Image Quality
+        if 'validation' in st.session_state:
+            val = st.session_state.validation
+            qual_status = "Good ✓" if val['is_valid'] else "Poor ⚠"
+            st.write(f"**Image Quality:** {qual_status}")
+            if not val['is_valid']:
+                st.warning("Image quality may reduce recognition reliability.")
                 
-                engine = load_gemini() if "Cloud AI" in selected_model else load_tesseract()
-                
-                final_text = ""
-                avg_conf = 0.0
-                lines_data = []
-                
-                # 3. Preprocessing & OCR
-                # TrOCR requires line segmentation. Gemini and Tesseract natively process full pages.
-                if run_segmentation and "TrOCR" in selected_model:
-                    page = segmenter.normalise_page(image_bgr)
-                    boxes = segmenter.detect_lines(page)
-                    
-                    confidences = []
-                    for i, (y1, y2, x1, x2) in enumerate(boxes):
-                        crop_bgr = page[y1:y2, x1:x2]
-                        status, reason = segmenter.categorize_crop(crop_bgr)
-                        
-                        if status in ["accepted", "uncertain"]:
-                            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-                            pil_crop = Image.fromarray(crop_rgb)
-                            
-                            text, conf = engine.predict(pil_crop)
-                            lines_data.append({"text": text, "conf": conf, "status": status})
-                            confidences.append(conf)
-                            
-                    final_text = "\n".join([l["text"] for l in lines_data])
-                    avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
-                else:
-                    # Full page inference (Gemini / Tesseract)
-                    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-                    pil_img = Image.fromarray(image_rgb)
-                    final_text, avg_conf = engine.predict(pil_img)
-                
-                proc_time = time.time() - t0
-                
-            # ─── Display Results ──────────────────────────────────────────────
-            st.subheader("Recognition Results")
-            
-            # Metrics Row
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Processing Time", f"{proc_time:.2f} s")
-            
-            # Confidence formatting
-            conf_pct = int(avg_conf * 100)
-            if conf_pct > 80:
-                conf_str = f"<span class='status-high'>{conf_pct}% (High)</span>"
-            elif conf_pct > 50:
-                conf_str = f"<span class='status-low'>{conf_pct}% (Moderate)</span>"
+            with st.expander("Technical Details"):
+                m = val['metrics']
+                st.write(f"- Resolution: {m.get('width')} × {m.get('height')}")
+                st.write(f"- Laplacian Blur Score: {m.get('blur_score')}")
+                st.write(f"- Contrast STD Score: {m.get('contrast_score')}")
+        
+        st.write("---")
+        
+        # STRUCTURED INFORMATION
+        if run_extraction:
+            st.subheader("Structured Information")
+            sd = res['structured']
+            if not any(sd.values()):
+                st.info("No structured information detected.")
             else:
-                conf_str = f"<span style='color:red; font-weight:bold;'>{conf_pct}% (Low)</span>"
-                st.warning("Low confidence prediction. Result may require manual verification.")
-                
-            m2.markdown(f"**Confidence:**<br>{conf_str}", unsafe_allow_html=True)
-            m3.metric("Model", "Gemini Cloud" if "Cloud AI" in selected_model else "Tesseract")
+                for k, v in sd.items():
+                    if v:
+                        st.markdown(f"**{k.replace('_', ' ').title()}**")
+                        if isinstance(v, list):
+                            for item in v:
+                                st.markdown(f"- {item}")
+                        elif isinstance(v, dict):
+                            for dk, dv in v.items():
+                                val_str = ", ".join(dv) if isinstance(dv, list) else dv
+                                st.markdown(f"- {dk}: {val_str}")
+                        else:
+                            st.markdown(f"- {v}")
+                            
+            with st.expander("View JSON"):
+                st.json({
+                    "document_type": res['doc_type'],
+                    "recognition_model": res['model_used'],
+                    "recognition_confidence": conf_label,
+                    "processing_time_seconds": round(res['time'], 2),
+                    "text": res['text'],
+                    "entities": sd
+                })
 
-            # Raw Text
-            st.text_area("Extracted Text", value=final_text, height=250)
+        st.write("---")
+        
+        # TECHNICAL ANALYSIS
+        with st.expander("Technical Analysis"):
+            st.write(f"**Recognition Model:** {res['model_used']}")
+            st.write(f"**Processing Time:** {res['time']:.2f} s")
+            st.write(f"**Preprocessing:** {'Enabled' if run_validation else 'Disabled'}")
+            st.write(f"**Line Segmentation:** {'Enabled' if run_segmentation else 'Disabled'}")
+            if run_segmentation and 'cv_boxes' in st.session_state:
+                st.write(f"**Detected Lines:** {len(st.session_state.cv_boxes)}")
+            st.write(f"**Structured Extraction:** {'Enabled' if run_extraction else 'Disabled'}")
+
+    
+    with col_main:
+        # RECOGNIZED TEXT
+        st.subheader("Recognized Text")
+        
+        if res['doc_type'] == "Source Code":
+            st.code(res['text'])
+        else:
+            st.text_area("Raw Recognition", value=res['text'], height=300, label_visibility="collapsed")
             
-            # 4. Structured Extraction
-            if run_extraction:
-                st.subheader("Structured Extraction")
-                structured_data = extractor.extract(final_text)
-                if not any(structured_data.values()):
-                    st.info("No structured entities (Dates, Amounts, Phones, Emails) detected.")
-                else:
-                    st.json(structured_data)
-                    
-            # Export
-            st.download_button("Download Text", data=final_text, file_name="extraction.txt", use_container_width=True)
+        # EXPORT SYSTEM
+        st.write("### Export Results")
+        ex1, ex2, ex3, ex4 = st.columns(4)
+        
+        metadata = {
+            "doc_type": res['doc_type'],
+            "model": res['model_used'],
+            "time": round(res['time'], 2),
+            "confidence_label": conf_label
+        }
+        
+        with ex1:
+            st.download_button("Download TXT", data=res['text'], file_name="document.txt", use_container_width=True)
+        with ex2:
+            pdf_bytes = generate_pdf(res['text'], metadata, res.get('structured', {}))
+            st.download_button("Download PDF", data=pdf_bytes, file_name="report.pdf", mime="application/pdf", use_container_width=True)
+        with ex3:
+            docx_bytes = generate_docx(res['text'], metadata)
+            st.download_button("Download DOCX", data=docx_bytes, file_name="document.docx", use_container_width=True)
+        with ex4:
+            json_bytes = generate_json(res['text'], metadata, res.get('structured', {}))
+            st.download_button("Download JSON", data=json_bytes, file_name="data.json", mime="application/json", use_container_width=True)
+            
+        st.write("---")
+        
+        # CV PREPROCESSING VISUALIZATION
+        st.subheader("Computer Vision Processing")
+        tab1, tab2 = st.tabs(["Original Image", "Processed Image (CV)"])
+        
+        with tab1:
+            st.image(res['original_image'], use_container_width=True)
+            
+        with tab2:
+            if 'processed_image' in st.session_state:
+                disp_img = st.session_state.processed_image.copy()
+                if run_segmentation and 'cv_boxes' in st.session_state:
+                    for (y1, y2, x1, x2) in st.session_state.cv_boxes:
+                        cv2.rectangle(disp_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                st.image(disp_img, use_container_width=True, caption="OpenCV normalisation and HPP Line detection bounds.")
+            else:
+                st.info("Preprocessing was disabled.")
+
+# ─── FOOTER ─────────────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### How It Works")
+st.markdown("<div style='color:#666; font-size:0.9rem;'>Upload ↓ Quality Validation ↓ Image Preprocessing ↓ Document Analysis ↓ OCR / AI Recognition ↓ Text Processing ↓ Structured Extraction ↓ Export<br><br>The system combines computer-vision preprocessing, AI/OCR-based recognition, post-processing, and structured information extraction to convert document images into usable digital data.</div>", unsafe_allow_html=True)
+st.markdown("<br><div style='color:#999; font-size:0.8rem;'><i>Privacy Note: Uploaded documents are processed in-memory for recognition and are not intentionally stored by this application.</i></div>", unsafe_allow_html=True)
