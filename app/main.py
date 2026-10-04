@@ -118,7 +118,8 @@ if uploaded_file is not None:
                 lines_data = []
                 
                 # 3. Preprocessing & OCR
-                if run_segmentation and "Cloud AI" in selected_model:
+                # TrOCR requires line segmentation. Gemini and Tesseract natively process full pages.
+                if run_segmentation and "TrOCR" in selected_model:
                     page = segmenter.normalise_page(image_bgr)
                     boxes = segmenter.detect_lines(page)
                     
@@ -138,7 +139,7 @@ if uploaded_file is not None:
                     final_text = "\n".join([l["text"] for l in lines_data])
                     avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
                 else:
-                    # Tesseract handles full page
+                    # Full page inference (Gemini / Tesseract)
                     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(image_rgb)
                     final_text, avg_conf = engine.predict(pil_img)
