@@ -366,7 +366,7 @@ def categorize_crop(crop_bgr: np.ndarray) -> tuple:
 def load_recogniser(device):
     from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
-    model_name = "microsoft/trocr-large-handwritten"
+    model_name = "microsoft/trocr-base-handwritten"
     # Streamlit Cloud throws a generic tokenizer error when attempting to instantiate
     # the Fast Tokenizer for RoBERTa. Forcing the slow tokenizer fixes this natively.
     processor = TrOCRProcessor.from_pretrained(model_name, use_fast=False)
@@ -382,7 +382,7 @@ def recognise_line(pil_image: Image.Image, processor, model, device) -> tuple:
         outputs = model.generate(
             pixel_values,
             max_new_tokens=128,        # longer lines won't get truncated
-            num_beams=5,               # extra beam improves word accuracy
+            num_beams=3,               # good accuracy/speed balance on CPU
             early_stopping=True,
             no_repeat_ngram_size=3,    # suppress repeated 3-grams
             repetition_penalty=1.3,    # penalise repeated words / hallucinations
@@ -537,7 +537,7 @@ def run_pipeline(
 
     # ── Step 4: Load recogniser (skip if already provided) ────────────
     if processor is None or model is None:
-        print("Loading TrOCR (microsoft/trocr-large-handwritten) …")
+        print("Loading TrOCR (microsoft/trocr-base-handwritten) …")
         processor, model = load_recogniser(device)
         print("Model loaded.\n")
     else:
@@ -588,7 +588,7 @@ def run_pipeline(
 
     # ── Step 7: Save outputs ───────────────────────────────────────────
     output_json = {
-        "model": "microsoft/trocr-large-handwritten",
+        "model": "microsoft/trocr-base-handwritten",
         "image": str(image_path),
         "preprocessing": "resize + mild Hough deskew",
         "segmentation": "HPP on binary mask + crop quality filter",

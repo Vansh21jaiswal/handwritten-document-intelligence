@@ -1,3 +1,14 @@
+---
+title: Handwritten Document Intelligence
+emoji: 📝
+colorFrom: blue
+colorTo: purple
+sdk: streamlit
+sdk_version: "1.30.0"
+app_file: app/main.py
+pinned: false
+---
+
 # Handwritten Document Intelligence
 
 Convert handwritten notebook pages, printed documents, and handwritten code into editable digital text.
@@ -10,6 +21,8 @@ This application provides an AI-assisted end-to-end pipeline for recognizing tex
 3. **Printed / Digital Documents**: Clean digital text from certificates, ID cards, and printed pages.
 
 *Note: Handwritten text recognition is inherently challenging. While the system uses state-of-the-art models, difficult cursive, ambiguous symbols, and messy handwriting may still require manual review. The application provides an interface to review and correct low-confidence lines.*
+
+**🚀 No API keys required — all AI models run locally on the server.**
 
 ## Main Workflow
 
@@ -28,20 +41,18 @@ This application provides an AI-assisted end-to-end pipeline for recognizing tex
 
 ## Current Models
 
-Depending on the selected mode, the application routes the image to different AI models:
+All models run locally — no cloud APIs, no rate limits:
 
-* **Handwritten Notes**: Uses `microsoft/trocr-large-handwritten` (Transformer-based optical character recognition) running locally.
+* **Handwritten Notes / Code**: Uses `microsoft/trocr-base-handwritten` (Transformer-based OCR) running locally with PyTorch. Line-level segmentation + per-line recognition with beam search.
 * **Printed Documents**: Uses `Tesseract OCR` for robust local character-by-character recognition of standard fonts.
-* **Handwritten Code**: Uses **Cloud AI (Gemini 3.6 Flash)** to accurately parse complex, non-prose handwritten programming syntax (requires API key).
 
 ## Main Technologies
 
 * **Streamlit**: Web interface and interactive application framework
 * **Hugging Face Transformers**: Model loading and inference (`VisionEncoderDecoderModel`)
-* **PyTorch**: Local tensor operations and model execution (supports Apple Silicon MPS)
+* **PyTorch**: Local tensor operations and model execution
 * **OpenCV**: Computer vision for deskewing, binarization, and horizontal projection profile (HPP) line segmentation
 * **Tesseract / Pytesseract**: Local OCR for printed documents
-* **Google Generative AI SDK**: Cloud API connection for code recognition
 * **FPDF2 & python-docx**: Document generation and export
 
 ## Local Installation
@@ -66,19 +77,24 @@ pip install -r requirements.txt
 To start the application locally:
 
 ```bash
-# Optional: Set Gemini API key for Handwritten Code mode
-export GEMINI_API_KEY="your_api_key_here"
-
 # Run the Streamlit app
 python3 -m streamlit run app/main.py
 ```
 
+## Deployment
+
+This app is designed to run on **Hugging Face Spaces** (free tier, 16 GB RAM). To deploy:
+
+1. Create a new Space on [huggingface.co](https://huggingface.co/new-space) with SDK set to **Streamlit**.
+2. Push this repository to the Space's git remote.
+3. The app will auto-deploy — no API keys or secrets required.
+
 ## Known Limitations
 
-* **Model Download**: On the first run, the TrOCR-Large model (~3.3GB) will be downloaded from the Hugging Face Hub to your local cache.
+* **Model Download**: On the first run, the TrOCR-Base model (~334 MB) will be downloaded from the Hugging Face Hub. Subsequent runs use the cached model.
 * **Handwritten Cursive**: Extremely dense or highly stylized cursive handwriting will degrade accuracy.
 * **Language Support**: Currently, the TrOCR model is optimized for English handwriting only.
-* **Code Mode Requirement**: The "Handwritten Code" mode explicitly requires an active internet connection and a valid `GEMINI_API_KEY` exported in the environment.
+* **Processing Time**: On CPU, each line takes ~2–3 seconds. A full page with 15 lines takes ~30–45 seconds.
 
 ## Screenshots
 
@@ -90,6 +106,7 @@ python3 -m streamlit run app/main.py
 handwritten-document-intelligence/
 ├── README.md                 # Project documentation
 ├── requirements.txt          # Python dependencies
+├── packages.txt              # System-level dependencies (Tesseract)
 ├── app/
 │   ├── main.py               # Main Streamlit application entry point
 ├── scripts/

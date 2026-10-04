@@ -9,8 +9,7 @@ torchvision>=0.16
 transformers>=4.38.0
 sentencepiece>=0.1.99
 
-# ─── Cloud & External OCR ─────────────────────────────────────────────────────
-google-generativeai>=0.8.0
+# ─── OCR ──────────────────────────────────────────────────────────────────────
 pytesseract>=0.3.10
 
 # ─── Export / Document Generation ─────────────────────────────────────────────

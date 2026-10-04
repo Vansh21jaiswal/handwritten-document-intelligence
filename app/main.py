@@ -8,12 +8,30 @@ from PIL import Image
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
+# ─── ML Pipeline ──────────────────────────────────────────────────────────────
+from scripts.run_handwriting_demo import run_pipeline, load_recogniser
+import torch
 
-# PDF and DOCX generation
+# ─── PDF and DOCX generation ─────────────────────────────────────────────────
 from fpdf import FPDF
 from docx import Document
 from docx.shared import Pt, Inches
 
+
+# ─── Cached model loader ─────────────────────────────────────────────────────
+@st.cache_resource(show_spinner="Loading handwriting recognition model (first run only)…")
+def load_trocr_model():
+    """Load TrOCR-Base once and cache it for the entire session.
+
+    On Hugging Face Spaces (16 GB RAM) this takes ~10-15 s on the very first
+    request.  Every subsequent call returns the cached objects instantly.
+    """
+    device = torch.device("cpu")
+    processor, model = load_recogniser(device)
+    return processor, model
+
+
+# ─── Helper functions ─────────────────────────────────────────────────────────
 
 def _sanitise_for_pdf(text: str) -> str:
     """Replace characters that the default FPDF Latin-1 font cannot render."""
@@ -86,7 +104,6 @@ def generate_docx(text: str, title: str = "Handwritten Notes Transcription") -> 
     return buf.getvalue()
 
 
-
 def printed_ocr(image_path: str) -> str:
     """Run Tesseract OCR on a printed/digital document image and return the extracted text."""
     import pytesseract
@@ -96,100 +113,7 @@ def printed_ocr(image_path: str) -> str:
     return text.strip()
 
 
-def handwritten_code_ocr(image_path: str) -> str:
-    """OCR pipeline tuned for handwritten code/math on notebook/blank paper.
-
-    Local models (TrOCR/Tesseract) fail completely on messy handwritten C++ 
-    because they expect either English prose or printed fonts.
-    This mode uses the Cloud AI (Gemini 3.6 Flash) to achieve >95% accuracy
-    on complex handwritten syntax and symbols.
-    """
-    import google.generativeai as genai
-    from PIL import Image
-    import os
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return "Error: GEMINI_API_KEY environment variable is not set. Cloud AI is required for code recognition."
-
-def _call_gemini_with_fallback(prompt: str, pil_img: Image.Image) -> str:
-    import google.generativeai as genai
-    import os
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return "Error: GEMINI_API_KEY environment variable is not set in Streamlit Secrets."
-
-    genai.configure(api_key=api_key)
-    
-    # Cascade of models to try. If one hits a quota or 404, we try the next.
-    models_to_try = [
-        "gemini-3.6-flash",         # This is the only one your key supports
-        "gemini-1.5-flash",
-        "gemini-1.5-pro"
-    ]
-
-    import time
-    error_log = []
-    
-    for model_name in models_to_try:
-        retries = 2
-        for attempt in range(retries):
-            try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(
-                    [prompt, pil_img],
-                    generation_config=genai.types.GenerationConfig(temperature=0.0)
-                )
-                text = response.text.strip()
-                
-                if text.startswith("```"):
-                    lines = text.split("\n")
-                    if len(lines) > 2:
-                        text = "\n".join(lines[1:-1]).strip()
-                
-                return text
-            except Exception as e:
-                error_str = str(e)
-                # If it's a 429 Per-Minute quota, wait and retry transparently
-                if "429" in error_str and "minute" in error_str.lower() and attempt < retries - 1:
-                    time.sleep(25)  # Wait 25 seconds for the minute quota to reset
-                    continue
-                    
-                error_log.append(f"[{model_name} attempt {attempt+1} failed]: {error_str}")
-                break # Break to next model if it's a 404 or out of retries
-                
-    detailed_errors = "\n\n".join(error_log)
-    return f"Error: Exhausted all available Gemini models.\n\nDetailed Logs:\n{detailed_errors}"
-
-
-def handwritten_code_ocr(image_path: str) -> str:
-    """OCR pipeline tuned for handwritten code/math on notebook/blank paper."""
-    from PIL import Image
-    pil_img = Image.open(image_path)
-    prompt = (
-        "Extract the handwritten programming code or math from this image. "
-        "Output ONLY the code text. Preserve indentation, brackets, semicolons, "
-        "and symbols exactly as written. Do NOT wrap the output in markdown "
-        "code blocks (like ```cpp) — just return the raw text."
-    )
-    return _call_gemini_with_fallback(prompt, pil_img)
-
-
-def handwritten_prose_ocr(image_path: str) -> str:
-    """OCR pipeline for handwritten prose / notebook notes using Gemini Flash."""
-    from PIL import Image
-    pil_img = Image.open(image_path)
-    prompt = (
-        "This is a photograph of a handwritten notebook page. "
-        "Transcribe ALL the handwritten text exactly as written, line by line, "
-        "preserving the original reading order from top to bottom. "
-        "If a word is unclear, make your best guess — do NOT skip it. "
-        "Output ONLY the transcribed text, with each line of handwriting on its own line. "
-        "Do NOT add any commentary, headings, or markdown formatting."
-    )
-    return _call_gemini_with_fallback(prompt, pil_img)
-
+# ─── Streamlit UI ─────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Handwritten Notes to Text", layout="wide")
 
@@ -280,7 +204,7 @@ if not st.session_state.processed:
         st.markdown("Choose a clear photo or scan of a printed document — certificate, ID card, letter, book page, etc.")
     elif is_code:
         st.markdown("### Upload your handwritten code")
-        st.markdown("Choose a clear photo of handwritten programming code or math. (Uses character-level OCR for symbols)")
+        st.markdown("Choose a clear photo of handwritten programming code or math.")
     else:
         st.markdown("### Upload your handwritten page")
         st.markdown("Choose a clear photo of a handwritten notebook page.")
@@ -310,7 +234,8 @@ if not st.session_state.processed:
                 st.session_state.temp_path = temp_path
 
                 if is_printed:
-                    with st.spinner("Reading your document..."):
+                    # ── PRINTED MODE: Tesseract (instant) ─────────────
+                    with st.spinner("Reading your document…"):
                         try:
                             text = printed_ocr(temp_path)
                             st.session_state.printed_text = text
@@ -318,27 +243,24 @@ if not st.session_state.processed:
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error during extraction: {str(e)}")
-                elif is_code:
-                    with st.spinner("Reading your handwritten code (character level)..."):
-                        try:
-                            text = handwritten_code_ocr(temp_path)
-                            st.session_state.printed_text = text  # Reuse the same simple text view as printed mode
-                            st.session_state.processed = True
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error during extraction: {str(e)}")
                 else:
-                    with st.spinner("Reading your handwriting (using Gemini AI)…"):
+                    # ── HANDWRITTEN MODE (Prose or Code): TrOCR pipeline ──
+                    spinner_msg = "Reading your handwritten code…" if is_code else "Reading your handwriting…"
+                    with st.spinner(spinner_msg):
                         try:
-                            text = handwritten_prose_ocr(temp_path)
-                            st.session_state.printed_text = text
+                            out_dir = os.path.join(project_root, "outputs", "demo", "app_results")
+                            trocr_processor, trocr_model = load_trocr_model()
+                            res = run_pipeline(
+                                temp_path,
+                                out_dir=out_dir,
+                                processor=trocr_processor,
+                                model=trocr_model,
+                            )
+                            st.session_state.res = res
                             st.session_state.processed = True
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error during extraction: {str(e)}")
-
-
-
 
 
 # -----------------------------------------
@@ -381,7 +303,7 @@ if st.session_state.processed:
     st.success("Text extracted successfully.")
     st.markdown("---")
 
-    # ── TEXT RESULTS (all modes now use printed_text) ───────────────────
+    # ── PRINTED MODE RESULTS (simple text view) ──────────────────────
     if st.session_state.printed_text is not None:
         final_text = st.session_state.printed_text
 
@@ -397,7 +319,7 @@ if st.session_state.processed:
             st.text_area("Extracted text", value=final_text, height=450, label_visibility="collapsed")
             _download_buttons(final_text)
 
-    # ── HANDWRITTEN MODE RESULTS ──────────────────────────────────────
+    # ── HANDWRITTEN MODE RESULTS (rich pipeline view) ────────────────
     elif st.session_state.res is not None:
         res = st.session_state.res
 
@@ -454,4 +376,3 @@ if st.session_state.processed:
         st.session_state.temp_path = None
         st.session_state.printed_text = None
         st.rerun()
-
