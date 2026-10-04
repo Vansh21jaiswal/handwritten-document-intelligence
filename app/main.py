@@ -17,10 +17,13 @@ from app.preprocessing.segmentation import ImageSegmenter
 from app.extraction.structured import StructuredExtractor
 
 # Caching the OCR models so they load instantly on subsequent requests
-@st.cache_resource(show_spinner="Loading Deep Learning Model (First Run Only)...")
-def load_trocr():
-    from app.ocr.trocr_engine import TrOCREngine
-    engine = TrOCREngine()
+@st.cache_resource(show_spinner="Connecting to Google Gemini Cloud...")
+def load_gemini():
+    from app.ocr.gemini_engine import GeminiEngine
+    engine = GeminiEngine()
+    # If on Streamlit Cloud, it will pull from st.secrets if environment variable isn't set
+    if not os.environ.get("GEMINI_API_KEY") and "GEMINI_API_KEY" in st.secrets:
+        os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
     engine.load_model()
     return engine
 
@@ -50,7 +53,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='hero-title'>Intelligent Handwritten Document Recognition</div>", unsafe_allow_html=True)
-st.markdown("<div class='hero-subtitle'>End-to-end AIML pipeline demonstrating CV preprocessing, Deep Learning OCR, and structured data extraction.</div>", unsafe_allow_html=True)
+st.markdown("<div class='hero-subtitle'>End-to-end AIML pipeline demonstrating CV preprocessing, Cloud AI OCR, and structured data extraction.</div>", unsafe_allow_html=True)
 
 # ─── Sidebar Config ────────────────────────────────────────────────────────
 with st.sidebar:
@@ -58,8 +61,8 @@ with st.sidebar:
     
     selected_model = st.radio(
         "Select OCR Engine",
-        ["Deep Learning (TrOCR)", "Traditional Baseline (Tesseract)"],
-        help="Compare performance between Traditional CV and Deep Learning."
+        ["Cloud AI (Gemini Vision)", "Traditional Baseline (Tesseract)"],
+        help="Compare performance between Traditional CV and Cloud AI."
     )
     
     st.markdown("---")
@@ -108,14 +111,14 @@ if uploaded_file is not None:
             with st.spinner("Processing pipeline..."):
                 t0 = time.time()
                 
-                engine = load_trocr() if "Deep Learning" in selected_model else load_tesseract()
+                engine = load_gemini() if "Cloud AI" in selected_model else load_tesseract()
                 
                 final_text = ""
                 avg_conf = 0.0
                 lines_data = []
                 
                 # 3. Preprocessing & OCR
-                if run_segmentation and "Deep Learning" in selected_model:
+                if run_segmentation and "Cloud AI" in selected_model:
                     page = segmenter.normalise_page(image_bgr)
                     boxes = segmenter.detect_lines(page)
                     
@@ -160,7 +163,7 @@ if uploaded_file is not None:
                 st.warning("Low confidence prediction. Result may require manual verification.")
                 
             m2.markdown(f"**Confidence:**<br>{conf_str}", unsafe_allow_html=True)
-            m3.metric("Model", "TrOCR" if "Deep" in selected_model else "Tesseract")
+            m3.metric("Model", "Gemini Cloud" if "Cloud AI" in selected_model else "Tesseract")
 
             # Raw Text
             st.text_area("Extracted Text", value=final_text, height=250)
