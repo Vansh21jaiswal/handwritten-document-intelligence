@@ -204,7 +204,7 @@ if st.session_state.processed:
         # Confidence
         conf_pct = int(res['conf'] * 100)
         conf_label = "High" if conf_pct > 80 else "Moderate" if conf_pct > 50 else "Low"
-        st.write(f"**Estimated Confidence:** {conf_label} ⓘ", help="Estimated recognition confidence. This is not equivalent to measured OCR accuracy.")
+        st.markdown(f"**Estimated Confidence:** {conf_label} ⓘ", help="Estimated recognition confidence. This is not equivalent to measured OCR accuracy.")
         
         st.write(f"**Processing Time:** {res['time']:.2f} seconds")
         
