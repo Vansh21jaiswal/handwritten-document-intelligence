@@ -285,8 +285,10 @@ elif st.session_state.page_state == "results":
             if not res['text'].strip():
                 st.info("No recognizable text detected in the image.")
             else:
-                # Using st.code with text language gives an adaptive container WITH a native copy button!
-                st.code(res['text'], language="text")
+                # Calculate adaptive height
+                lines = res['text'].count('\n') + len(res['text']) // 80 + 2
+                dyn_height = min(600, max(150, lines * 24))
+                st.text_area("Recognized Text Area", value=res['text'], height=dyn_height, label_visibility="collapsed")
             
         st.write("---")
         
