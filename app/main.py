@@ -50,13 +50,9 @@ st.markdown("""
     .workflow-active { color: #0f8243; }
     .status-high { color: #0f8243; font-weight: bold; }
     .status-low { color: #d97706; font-weight: bold; }
-    .metric-card { background: #f9f9f9; border-radius: 8px; padding: 15px; margin-bottom: 15px; border: 1px solid #eee; }
-    .metric-title { font-size: 0.9rem; color: #666; font-weight: 600; text-transform: uppercase; margin-bottom: 5px; }
-    .metric-value { font-size: 1.1rem; font-weight: 700; color: #111; }
-    
-    [data-theme="dark"] .metric-card { background: #1e1e1e; border-color: #333; }
-    [data-theme="dark"] .metric-title { color: #aaa; }
-    [data-theme="dark"] .metric-value { color: #eee; }
+    .metric-card { background: var(--secondary-background-color, #f9f9f9); border-radius: 8px; padding: 15px; margin-bottom: 15px; border: 1px solid var(--border-color, #eee); }
+    .metric-title { font-size: 0.85rem; color: var(--text-color, #666); opacity: 0.8; font-weight: 600; text-transform: uppercase; margin-bottom: 5px; }
+    .metric-value { font-size: 1.1rem; font-weight: 700; color: var(--text-color, #111); }
     </style>
 """, unsafe_allow_html=True)
 
@@ -64,23 +60,12 @@ st.markdown("""
 st.markdown("<div class='hero-title'>Intelligent Document Recognition</div>", unsafe_allow_html=True)
 st.markdown("<div class='hero-subtitle'>Transform handwritten, printed, and code images into searchable, structured text.</div>", unsafe_allow_html=True)
 
-st.markdown("""
-<div class='workflow-steps'>
-    <span class='workflow-active'>① Upload</span> &nbsp;→&nbsp; 
-    <span>② Analyze</span> &nbsp;→&nbsp; 
-    <span>③ Results</span>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("<div style='text-align: center; color: #666;'>Supported: Handwritten Notes • Source Code • Printed Documents • Forms / IDs</div>", unsafe_allow_html=True)
-st.write("")
-
-# ─── SIDEBAR REDESIGN ───────────────────────────────────────────────────────
+# ─── SIDEBAR ────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Recognition")
     selected_model = st.radio(
         "OCR Engine:",
-        ["AI Recognition (Gemini)", "Traditional OCR (Tesseract)"],
+        ["AI Recognition · Gemini", "Traditional OCR (Tesseract)"],
         label_visibility="collapsed"
     )
     
@@ -91,106 +76,108 @@ with st.sidebar:
     with st.expander("Advanced Settings"):
         run_segmentation = st.checkbox("Line Segmentation (CV)", value=True, help="Applies HPP segmentation. Visualized in Technical Analysis.")
 
-# ─── MAIN UPLOAD ────────────────────────────────────────────────────────────
-if 'processed' not in st.session_state:
-    st.session_state.processed = False
+# ─── STATE MANAGEMENT ───────────────────────────────────────────────────────
+if 'page_state' not in st.session_state:
+    st.session_state.page_state = "upload"
     st.session_state.results = {}
 
-uploaded_file = st.file_uploader("Upload your document (Drag and drop an image here or browse files)", type=["jpg", "jpeg", "png"])
+def reset_state():
+    st.session_state.page_state = "upload"
+    st.session_state.results = {}
 
-if uploaded_file is not None and not st.session_state.processed:
-    st.image(uploaded_file, width=400)
+# ─── WORKFLOW STEPPER ───────────────────────────────────────────────────────
+stepper_placeholder = st.empty()
+
+def update_stepper(state: str):
+    if state == "upload":
+        html = "<span class='workflow-active'>① Upload</span> &nbsp;─────&nbsp; <span>② Analyze</span> &nbsp;─────&nbsp; <span>③ Results</span>"
+    elif state == "processing":
+        html = "<span class='status-high'>✓ Upload</span> &nbsp;─────&nbsp; <span class='workflow-active'>⟳ Analyze</span> &nbsp;─────&nbsp; <span>○ Results</span>"
+    else:
+        html = "<span class='status-high'>✓ Upload</span> &nbsp;─────&nbsp; <span class='status-high'>✓ Analyze</span> &nbsp;─────&nbsp; <span class='workflow-active'>✓ Results</span>"
+        
+    stepper_placeholder.markdown(f"<div class='workflow-steps'>{html}</div>", unsafe_allow_html=True)
+
+update_stepper(st.session_state.page_state)
+
+# ─── MAIN APP LOGIC ─────────────────────────────────────────────────────────
+
+if st.session_state.page_state == "upload":
+    st.markdown("<div style='text-align: center; color: #666; margin-bottom: 20px;'>Supported: Handwritten Notes • Source Code • Printed Documents • Forms / IDs</div>", unsafe_allow_html=True)
     
-    if st.button("Run Recognition Pipeline", type="primary", use_container_width=True):
+    uploaded_file = st.file_uploader("Upload your document (Drag and drop an image here or browse files)", type=["jpg", "jpeg", "png"])
+    
+    if uploaded_file is not None:
+        st.image(uploaded_file, width=400)
         
-        # UI Update for Progress
-        st.markdown("""
-        <div class='workflow-steps'>
-            <span>① Upload</span> &nbsp;→&nbsp; 
-            <span class='workflow-active'>② Analyze</span> &nbsp;→&nbsp; 
-            <span>③ Results</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # 1. Load Image
-        status_text.text("Analyzing document...")
-        image_bytes = uploaded_file.read()
-        np_arr = np.frombuffer(image_bytes, np.uint8)
-        image_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        progress_bar.progress(10)
-        
-        # 2. Validation
-        if run_validation:
-            status_text.text("✓ Image quality checked")
-            val_res = validator.validate(image_bgr)
-            st.session_state.validation = val_res
-            time.sleep(0.5)
-        progress_bar.progress(30)
-        
-        # 3. Preprocessing (CV)
-        status_text.text("✓ Image preprocessing completed")
-        page = segmenter.normalise_page(image_bgr)
-        st.session_state.processed_image = cv2.cvtColor(page, cv2.COLOR_BGR2RGB)
-        
-        boxes = []
-        if run_segmentation:
-            boxes = segmenter.detect_lines(page)
-        st.session_state.cv_boxes = boxes
-        progress_bar.progress(50)
-        
-        # 4. OCR
-        status_text.text("⟳ Recognizing text...")
-        t0 = time.time()
-        engine = load_gemini() if "AI Recognition" in selected_model else load_tesseract()
-        
-        pil_img = Image.fromarray(st.session_state.processed_image)
-        final_text, avg_conf, doc_type = engine.predict(pil_img)
-        proc_time = time.time() - t0
-        progress_bar.progress(80)
-        
-        # 5. Extraction & Document Type Detection
-        status_text.text("○ Extracting structured information")
-        structured_data = {}
-        
-        if run_extraction:
-            structured_data = extractor.extract(final_text)
+        if st.button("Run Recognition Pipeline", type="primary", use_container_width=True):
+            st.session_state.page_state = "processing"
+            update_stepper("processing")
             
-        progress_bar.progress(100)
-        status_text.text("✓ Analysis complete")
-        time.sleep(0.5)
-        
-        # Save to session state
-        st.session_state.results = {
-            "text": final_text,
-            "conf": avg_conf,
-            "time": proc_time,
-            "doc_type": doc_type,
-            "structured": structured_data,
-            "model_used": "Gemini Vision" if "AI" in selected_model else "Tesseract",
-            "original_image": image_bytes
-        }
-        st.session_state.processed = True
-        st.rerun()
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            status_text.text("Analyzing document...")
+            image_bytes = uploaded_file.read()
+            np_arr = np.frombuffer(image_bytes, np.uint8)
+            image_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            progress_bar.progress(10)
+            
+            if run_validation:
+                status_text.text("✓ Image quality checked")
+                val_res = validator.validate(image_bgr)
+                st.session_state.validation = val_res
+                time.sleep(0.5)
+            progress_bar.progress(30)
+            
+            status_text.text("✓ Image preprocessing completed")
+            page = segmenter.normalise_page(image_bgr)
+            st.session_state.processed_image = cv2.cvtColor(page, cv2.COLOR_BGR2RGB)
+            
+            boxes = []
+            if run_segmentation:
+                boxes = segmenter.detect_lines(page)
+            st.session_state.cv_boxes = boxes
+            progress_bar.progress(50)
+            
+            status_text.text("⟳ Recognizing text...")
+            t0 = time.time()
+            engine = load_gemini() if "AI Recognition" in selected_model else load_tesseract()
+            
+            pil_img = Image.fromarray(st.session_state.processed_image)
+            final_text, avg_conf, doc_type = engine.predict(pil_img)
+            proc_time = time.time() - t0
+            progress_bar.progress(80)
+            
+            status_text.text("○ Extracting structured information")
+            structured_data = {}
+            if run_extraction:
+                structured_data = extractor.extract(final_text)
+                
+            progress_bar.progress(100)
+            status_text.text("✓ Analysis complete")
+            time.sleep(0.5)
+            
+            st.session_state.results = {
+                "text": final_text,
+                "conf": avg_conf,
+                "time": proc_time,
+                "doc_type": doc_type,
+                "structured": structured_data,
+                "model_used": "Gemini Vision" if "AI" in selected_model else "Tesseract",
+                "original_image": image_bytes
+            }
+            st.session_state.page_state = "results"
+            st.rerun()
 
-# ─── RESULTS VIEW ───────────────────────────────────────────────────────────
-if st.session_state.processed:
-    st.markdown("""
-    <div class='workflow-steps'>
-        <span>① Upload</span> &nbsp;→&nbsp; 
-        <span>② Analyze</span> &nbsp;→&nbsp; 
-        <span class='workflow-active'>③ Results</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
+elif st.session_state.page_state == "results":
     res = st.session_state.results
     
-    if st.button("← Upload Another Document"):
-        st.session_state.processed = False
-        st.session_state.results = {}
-        st.rerun()
+    col_status, col_btn = st.columns([4, 1])
+    with col_status:
+        st.markdown("<h3 style='color: #0f8243; margin-top: 0;'>✓ Analysis Complete</h3>", unsafe_allow_html=True)
+    with col_btn:
+        st.button("+ New Analysis", on_click=reset_state, use_container_width=True)
         
     st.write("---")
     
