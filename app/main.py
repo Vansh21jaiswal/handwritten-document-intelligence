@@ -152,7 +152,7 @@ if st.session_state.page_state == "upload":
                 status_text.empty()
                 st.session_state.page_state = "upload" # Reset state so they can try again
                 if "429" in str(e) or "quota" in str(e).lower():
-                    st.error("Google Gemini API Free-Tier Quota Exceeded (Limit: 5 requests per minute). Please wait 60 seconds and try again.")
+                    st.error(f"Google Gemini API Free-Tier Quota Exceeded. Raw error: {str(e)}")
                 else:
                     st.error(f"Recognition service encountered an error: {str(e)}")
                 st.stop()

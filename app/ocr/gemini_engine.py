@@ -15,9 +15,8 @@ class GeminiEngine(OCRModel):
         self.is_loaded = False
         self.api_key = os.environ.get("GEMINI_API_KEY")
         
-        # We use the specific 3.6 model that your key is authorized for
+        # We use the specific 1.5 model
         self.models_to_try = [
-            "gemini-3.6-flash",
             "gemini-1.5-flash"
         ]
 
