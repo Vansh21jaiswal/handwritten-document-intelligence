@@ -145,7 +145,18 @@ if st.session_state.page_state == "upload":
             engine = load_gemini() if "AI Recognition" in selected_model else load_tesseract()
             
             pil_img = Image.fromarray(st.session_state.processed_image)
-            final_text, avg_conf, doc_type = engine.predict(pil_img)
+            try:
+                final_text, avg_conf, doc_type = engine.predict(pil_img)
+            except Exception as e:
+                progress_bar.empty()
+                status_text.empty()
+                st.session_state.page_state = "upload" # Reset state so they can try again
+                if "429" in str(e) or "quota" in str(e).lower():
+                    st.error("Google Gemini API Free-Tier Quota Exceeded (Limit: 5 requests per minute). Please wait 60 seconds and try again.")
+                else:
+                    st.error(f"Recognition service encountered an error: {str(e)}")
+                st.stop()
+                
             proc_time = time.time() - t0
             progress_bar.progress(80)
             
