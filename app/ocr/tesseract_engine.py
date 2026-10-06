@@ -17,7 +17,7 @@ class TesseractEngine(OCRModel):
         """Tesseract does not require a heavy model load into RAM."""
         self.is_loaded = True
 
-    def predict(self, image: Image.Image) -> Tuple[str, float]:
+    def predict(self, image: Image.Image) -> Tuple[str, float, str]:
         """
         Run Tesseract OCR.
         Tesseract can provide confidence scores if we use image_to_data, 
@@ -43,7 +43,8 @@ class TesseractEngine(OCRModel):
         # Aggregate confidence (average word confidence)
         avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
         
-        return final_text.strip(), avg_conf
+        # Tesseract is mainly used for printed text
+        return final_text.strip(), avg_conf, "General Text"
 
     def get_model_info(self) -> Dict[str, Any]:
         return {

@@ -27,15 +27,18 @@ class GeminiEngine(OCRModel):
         genai.configure(api_key=self.api_key)
         self.is_loaded = True
 
-    def predict(self, image: Image.Image) -> Tuple[str, float]:
+    def predict(self, image: Image.Image) -> Tuple[str, float, str]:
         if not self.is_loaded:
             self.load_model()
             
+        # Optimization: Resize image to max 1024px to drastically reduce payload size and API latency
+        image.thumbnail((1024, 1024))
+            
         prompt = (
-            "This is a photograph of a handwritten notebook page or document. "
-            "Transcribe ALL the text exactly as written, line by line, "
-            "preserving the original reading order from top to bottom. "
-            "Output ONLY the transcribed text. Do NOT add any markdown formatting."
+            "Analyze this document image and return a JSON object with two fields:\n"
+            "1. 'document_type': Classify it strictly as one of ['Handwritten Document', 'Source Code', 'Printed Document', 'ID / Form', 'General Text'].\n"
+            "2. 'transcription': Transcribe ALL the text exactly as written, line by line, preserving the original reading order. "
+            "Preserve code formatting if it is source code."
         )
 
         error_log = []
@@ -46,22 +49,25 @@ class GeminiEngine(OCRModel):
                     model = genai.GenerativeModel(model_name)
                     response = model.generate_content(
                         [prompt, image],
-                        generation_config=genai.types.GenerationConfig(temperature=0.0)
+                        generation_config=genai.types.GenerationConfig(
+                            temperature=0.0,
+                            response_mime_type="application/json"
+                        )
                     )
-                    text = response.text.strip()
                     
-                    if text.startswith("```"):
-                        lines = text.split("\n")
-                        if len(lines) > 2:
-                            text = "\n".join(lines[1:-1]).strip()
+                    import json
+                    try:
+                        data = json.loads(response.text)
+                        text = data.get("transcription", "").strip()
+                        doc_type = data.get("document_type", "General Text")
+                    except Exception:
+                        text = response.text.strip()
+                        doc_type = "General Text"
                     
-                    # Gemini doesn't return exact confidence for text generation, so we default to high (0.95)
-                    # if the API succeeds, as Gemini's OCR capability is near state-of-the-art.
-                    return text, 0.95
+                    return text, 0.95, doc_type
                     
                 except Exception as e:
                     error_str = str(e)
-                    # Handle the strict 5-request-per-minute Free Tier limit silently
                     if "429" in error_str and "minute" in error_str.lower() and attempt < retries - 1:
                         time.sleep(25)
                         continue

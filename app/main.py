@@ -50,6 +50,13 @@ st.markdown("""
     .workflow-active { color: #0f8243; }
     .status-high { color: #0f8243; font-weight: bold; }
     .status-low { color: #d97706; font-weight: bold; }
+    .metric-card { background: #f9f9f9; border-radius: 8px; padding: 15px; margin-bottom: 15px; border: 1px solid #eee; }
+    .metric-title { font-size: 0.9rem; color: #666; font-weight: 600; text-transform: uppercase; margin-bottom: 5px; }
+    .metric-value { font-size: 1.1rem; font-weight: 700; color: #111; }
+    
+    [data-theme="dark"] .metric-card { background: #1e1e1e; border-color: #333; }
+    [data-theme="dark"] .metric-title { color: #aaa; }
+    [data-theme="dark"] .metric-value { color: #eee; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -139,23 +146,17 @@ if uploaded_file is not None and not st.session_state.processed:
         t0 = time.time()
         engine = load_gemini() if "AI Recognition" in selected_model else load_tesseract()
         
-        # Both models process full page to avoid rate limiting
         pil_img = Image.fromarray(st.session_state.processed_image)
-        final_text, avg_conf = engine.predict(pil_img)
+        final_text, avg_conf, doc_type = engine.predict(pil_img)
         proc_time = time.time() - t0
         progress_bar.progress(80)
         
         # 5. Extraction & Document Type Detection
         status_text.text("○ Extracting structured information")
-        doc_type = "General Text"
         structured_data = {}
         
         if run_extraction:
             structured_data = extractor.extract(final_text)
-            doc_type = extractor.detect_document_type(final_text)
-        else:
-            # Fallback heuristic if extraction disabled
-            doc_type = extractor.detect_document_type(final_text)
             
         progress_bar.progress(100)
         status_text.text("✓ Analysis complete")
@@ -198,29 +199,41 @@ if st.session_state.processed:
     with col_side:
         # ANALYSIS SUMMARY
         st.subheader("Analysis Summary")
-        st.write(f"**Document Type:** {res['doc_type']}")
-        st.write(f"**Recognition Model:** {res['model_used']}")
         
-        # Confidence
         conf_pct = int(res['conf'] * 100)
         conf_label = "High" if conf_pct > 80 else "Moderate" if conf_pct > 50 else "Low"
-        st.markdown(f"**Estimated Confidence:** {conf_label} ⓘ", help="Estimated recognition confidence. This is not equivalent to measured OCR accuracy.")
         
-        st.write(f"**Processing Time:** {res['time']:.2f} seconds")
-        
-        # Image Quality
-        if 'validation' in st.session_state:
-            val = st.session_state.validation
-            qual_status = "Good ✓" if val['is_valid'] else "Poor ⚠"
-            st.write(f"**Image Quality:** {qual_status}")
-            if not val['is_valid']:
-                st.warning("Image quality may reduce recognition reliability.")
-                
-            with st.expander("Technical Details"):
-                m = val['metrics']
-                st.write(f"- Resolution: {m.get('width')} × {m.get('height')}")
-                st.write(f"- Laplacian Blur Score: {m.get('blur_score')}")
-                st.write(f"- Contrast STD Score: {m.get('contrast_score')}")
+        qual_status = "Good ✓"
+        if 'validation' in st.session_state and not st.session_state.validation['is_valid']:
+            qual_status = "Poor ⚠"
+            
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Document Type</div>
+            <div class="metric-value">{res['doc_type']}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-title">Recognition Model</div>
+            <div class="metric-value">{res['model_used']}</div>
+        </div>
+        <div class="metric-card" title="Estimated recognition confidence. This is not equivalent to measured OCR accuracy.">
+            <div class="metric-title">Estimated Confidence ⓘ</div>
+            <div class="metric-value">
+                <span class="{'status-high' if conf_label=='High' else 'status-low'}">{conf_label}</span>
+            </div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-title">Processing Time</div>
+            <div class="metric-value">{res['time']:.2f} seconds</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-title">Image Quality</div>
+            <div class="metric-value">{qual_status}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if qual_status != "Good ✓":
+            st.warning("Image quality may reduce recognition reliability.")
         
         st.write("---")
         
@@ -245,40 +258,33 @@ if st.session_state.processed:
                             st.markdown(f"- {v}")
                             
             with st.expander("View JSON"):
-                st.json({
-                    "document_type": res['doc_type'],
-                    "recognition_model": res['model_used'],
-                    "recognition_confidence": conf_label,
-                    "processing_time_seconds": round(res['time'], 2),
-                    "text": res['text'],
-                    "entities": sd
-                })
+                st.write("Machine-readable JSON payload:")
+                json_data = generate_json(res['text'], {
+                    "doc_type": res['doc_type'],
+                    "model": res['model_used'],
+                    "time": round(res['time'], 2),
+                    "confidence_label": conf_label
+                }, sd)
+                st.code(json_data.decode('utf-8'), language="json")
 
-        st.write("---")
-        
-        # TECHNICAL ANALYSIS
-        with st.expander("Technical Analysis"):
-            st.write(f"**Recognition Model:** {res['model_used']}")
-            st.write(f"**Processing Time:** {res['time']:.2f} s")
-            st.write(f"**Preprocessing:** {'Enabled' if run_validation else 'Disabled'}")
-            st.write(f"**Line Segmentation:** {'Enabled' if run_segmentation else 'Disabled'}")
-            if run_segmentation and 'cv_boxes' in st.session_state:
-                st.write(f"**Detected Lines:** {len(st.session_state.cv_boxes)}")
-            st.write(f"**Structured Extraction:** {'Enabled' if run_extraction else 'Disabled'}")
-
-    
     with col_main:
         # RECOGNIZED TEXT
         st.subheader("Recognized Text")
         
         if res['doc_type'] == "Source Code":
-            st.code(res['text'])
+            st.code(res['text'], language="python")
         else:
-            st.text_area("Raw Recognition", value=res['text'], height=300, label_visibility="collapsed")
+            if not res['text'].strip():
+                st.info("No recognizable text detected in the image.")
+            else:
+                # Using st.code with text language gives an adaptive container WITH a native copy button!
+                st.code(res['text'], language="text")
             
+        st.write("---")
+        
         # EXPORT SYSTEM
-        st.write("### Export Results")
-        ex1, ex2, ex3, ex4 = st.columns(4)
+        st.subheader("Export Results")
+        doc_col, data_col = st.columns(2)
         
         metadata = {
             "doc_type": res['doc_type'],
@@ -287,39 +293,56 @@ if st.session_state.processed:
             "confidence_label": conf_label
         }
         
-        with ex1:
-            st.download_button("Download TXT", data=res['text'], file_name="document.txt", use_container_width=True)
-        with ex2:
-            pdf_bytes = generate_pdf(res['text'], metadata, res.get('structured', {}))
-            st.download_button("Download PDF", data=pdf_bytes, file_name="report.pdf", mime="application/pdf", use_container_width=True)
-        with ex3:
-            docx_bytes = generate_docx(res['text'], metadata)
-            st.download_button("Download DOCX", data=docx_bytes, file_name="document.docx", use_container_width=True)
-        with ex4:
-            json_bytes = generate_json(res['text'], metadata, res.get('structured', {}))
-            st.download_button("Download JSON", data=json_bytes, file_name="data.json", mime="application/json", use_container_width=True)
-            
+        doc_col.write("**Document Exports**")
+        doc_col.download_button("📥 Download PDF", data=generate_pdf(res['text'], metadata, res.get('structured', {})), file_name="report.pdf", mime="application/pdf")
+        doc_col.download_button("📥 Download DOCX", data=generate_docx(res['text'], metadata), file_name="document.docx")
+        doc_col.download_button("📥 Download TXT", data=res['text'], file_name="extraction.txt")
+        
+        data_col.write("**Data Exports**")
+        data_col.download_button("📥 Download JSON", data=generate_json(res['text'], metadata, res.get('structured', {})), file_name="data.json", mime="application/json")
+        # Only meaningful CSV logic (key-values) could go here if requested, but JSON is prioritized.
+        
         st.write("---")
         
         # CV PREPROCESSING VISUALIZATION
-        st.subheader("Computer Vision Processing")
-        tab1, tab2 = st.tabs(["Original Image", "Processed Image (CV)"])
-        
-        with tab1:
-            st.image(res['original_image'], use_container_width=True)
-            
-        with tab2:
-            if 'processed_image' in st.session_state:
-                disp_img = st.session_state.processed_image.copy()
-                if run_segmentation and 'cv_boxes' in st.session_state:
-                    for (y1, y2, x1, x2) in st.session_state.cv_boxes:
-                        cv2.rectangle(disp_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                st.image(disp_img, use_container_width=True, caption="OpenCV normalisation and HPP Line detection bounds.")
-            else:
-                st.info("Preprocessing was disabled.")
+        with st.expander("Computer Vision & Preprocessing Visualization"):
+            tab1, tab2 = st.tabs(["Original Image", "Processed Image (CV)"])
+            with tab1:
+                st.image(res['original_image'], use_container_width=True)
+            with tab2:
+                if 'processed_image' in st.session_state:
+                    disp_img = st.session_state.processed_image.copy()
+                    if run_segmentation and 'cv_boxes' in st.session_state:
+                        for (y1, y2, x1, x2) in st.session_state.cv_boxes:
+                            cv2.rectangle(disp_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    st.image(disp_img, use_container_width=True, caption="OpenCV normalisation and HPP Line detection bounds.")
+                else:
+                    st.info("Preprocessing was disabled.")
+
+        # TECHNICAL ANALYSIS
+        with st.expander("Technical Analysis"):
+            st.write(f"**Recognition Model:** {res['model_used']}")
+            st.write(f"**Processing Time:** {res['time']:.2f} seconds")
+            st.write(f"**Preprocessing:** {'Enabled' if run_validation else 'Disabled'}")
+            st.write(f"**Line Segmentation:** {'Enabled' if run_segmentation else 'Disabled'}")
+            if run_segmentation and 'cv_boxes' in st.session_state:
+                st.write(f"**Detected Lines:** {len(st.session_state.cv_boxes)}")
+            st.write(f"**Structured Extraction:** {'Enabled' if run_extraction else 'Disabled'}")
+            if 'validation' in st.session_state:
+                m = st.session_state.validation['metrics']
+                st.write(f"**Input Resolution:** {m.get('width')} × {m.get('height')}")
+                st.write(f"**Laplacian Blur Score:** {m.get('blur_score')}")
+                st.write(f"**Contrast STD Score:** {m.get('contrast_score')}")
 
 # ─── FOOTER ─────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("### How It Works")
-st.markdown("<div style='color:#666; font-size:0.9rem;'>Upload ↓ Quality Validation ↓ Image Preprocessing ↓ Document Analysis ↓ OCR / AI Recognition ↓ Text Processing ↓ Structured Extraction ↓ Export<br><br>The system combines computer-vision preprocessing, AI/OCR-based recognition, post-processing, and structured information extraction to convert document images into usable digital data.</div>", unsafe_allow_html=True)
-st.markdown("<br><div style='color:#999; font-size:0.8rem;'><i>Privacy Note: Uploaded documents are processed in-memory for recognition and are not intentionally stored by this application.</i></div>", unsafe_allow_html=True)
+st.markdown("""
+<div style='background: #f1f5f9; padding: 15px; border-radius: 8px; text-align: center; color: #334155; font-size: 0.95rem; font-weight: 500;'>
+    Upload &nbsp; ➔ &nbsp; Quality Check &nbsp; ➔ &nbsp; CV Preprocessing &nbsp; ➔ &nbsp; AI Recognition &nbsp; ➔ &nbsp; Entity Extraction &nbsp; ➔ &nbsp; Export
+</div>
+<br><div style='color:#666; font-size:0.9rem; text-align: center;'>
+The system combines computer-vision preprocessing, AI/OCR-based recognition, post-processing, and structured information extraction to convert document images into usable digital data.
+</div>
+""", unsafe_allow_html=True)
+st.markdown("<br><div style='color:#999; font-size:0.8rem; text-align: center;'><i>Privacy Note: Uploaded documents are processed in-memory for recognition and are not intentionally stored by this application.</i></div>", unsafe_allow_html=True)

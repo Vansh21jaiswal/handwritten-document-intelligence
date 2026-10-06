@@ -15,7 +15,7 @@ class OCRModel(ABC):
         pass
 
     @abstractmethod
-    def predict(self, image: Image.Image) -> Tuple[str, float]:
+    def predict(self, image: Image.Image) -> Tuple[str, float, str]:
         """
         Run inference on a single image/crop.
         
@@ -23,7 +23,7 @@ class OCRModel(ABC):
             image: PIL Image
             
         Returns:
-            Tuple of (recognized_text, confidence_score [0.0 to 1.0])
+            Tuple of (recognized_text, confidence_score [0.0 to 1.0], document_type)
         """
         pass
 
