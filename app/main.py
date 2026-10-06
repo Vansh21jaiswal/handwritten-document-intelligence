@@ -50,6 +50,16 @@ st.markdown("""
     .workflow-active { color: #0f8243; }
     .status-high { color: #0f8243; font-weight: bold; }
     .status-low { color: #d97706; font-weight: bold; }
+    
+    /* Force text wrapping in st.code blocks to prevent one-liners */
+    [data-testid="stCodeBlock"] pre {
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+    }
+    [data-testid="stCodeBlock"] code {
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+    }
     .metric-card { background: var(--secondary-background-color, #f9f9f9); border-radius: 8px; padding: 15px; margin-bottom: 15px; border: 1px solid var(--border-color, #eee); }
     .metric-title { font-size: 0.85rem; color: var(--text-color, #666); opacity: 0.8; font-weight: 600; text-transform: uppercase; margin-bottom: 5px; }
     .metric-value { font-size: 1.1rem; font-weight: 700; color: var(--text-color, #111); }
