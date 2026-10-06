@@ -1,13 +1,4 @@
----
-title: Intelligent Handwritten Document Recognition
-emoji: 🧠
-colorFrom: blue
-colorTo: purple
-sdk: streamlit
-sdk_version: "1.30.0"
-app_file: app/main.py
-pinned: false
----
+
 
 # Intelligent Handwritten Document Recognition System
 
