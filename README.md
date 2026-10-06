@@ -51,7 +51,6 @@ Results UI / Export (PDF, DOCX, JSON)
 ## Technology Stack
 - **Python** (Core Logic)
 - **Streamlit** (Frontend Dashboard)
-- **FastAPI / Uvicorn** (Backend Microservice structure)
 - **OpenCV** (Computer Vision Preprocessing)
 - **Tesseract (pytesseract)** (Traditional OCR)
 - **Gemini Vision (google-generativeai)** (Cloud AI Recognition)

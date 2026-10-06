@@ -3,14 +3,9 @@ numpy>=1.24
 Pillow>=10.0
 opencv-python-headless>=4.8
 
-# ─── Deep Learning ────────────────────────────────────────────────────────────
-torch>=2.1
-torchvision>=0.16
-transformers>=4.38.0
-sentencepiece>=0.1.99
-
-# ─── OCR ──────────────────────────────────────────────────────────────────────
+# ─── OCR & AI ─────────────────────────────────────────────────────────────────
 pytesseract>=0.3.10
+google-generativeai>=0.8.0
 
 # ─── Export / Document Generation ─────────────────────────────────────────────
 fpdf2>=2.7.0
@@ -19,12 +14,5 @@ python-docx>=1.1.0
 # ─── Web Application ──────────────────────────────────────────────────────────
 streamlit>=1.30.0
 
-# ─── Evaluation & Utilities ───────────────────────────────────────────────────
-jiwer>=3.0
-tqdm>=4.66
-fastapi>=0.103.0
-uvicorn>=0.23.2
-python-multipart>=0.0.6
+# ─── Utilities ────────────────────────────────────────────────────────────────
 pytest>=7.4.0
-httpx>=0.25.0
-google-generativeai>=0.8.0
